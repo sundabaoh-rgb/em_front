@@ -67,8 +67,8 @@ export async function POST(req: Request) {
      * Прокидываем ровно то, что ждёт backend: поле `file`.
      */
     const upstream = new FormData();
-    upstream.append("audio", file);
-    upstream.append("test_mode", "true"); //! Тестовый режим
+    upstream.append("audio", file, (file as File).name || "recording.webm");
+    upstream.append("test_mode", "false"); //! Тестовый режим
 
     /**
      * Проксируем загрузку на backend.

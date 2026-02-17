@@ -73,7 +73,6 @@ type State = {
   runModelId: string | null;
   runWindowMs: number | null;
 
-  // file
   audioFile: File | null;
   setAudioFile: (f: File | null) => void;
 
@@ -88,6 +87,7 @@ type State = {
 
 function b64ToU8(b64: string): Uint8Array {
   if (!b64) return new Uint8Array(0);
+  // поддержим и urlsafe, и обычный base64
   let norm = b64.replace(/-/g, "+").replace(/_/g, "/");
   const pad = norm.length % 4;
   if (pad) norm += "=".repeat(4 - pad);
@@ -130,10 +130,11 @@ async function apiUpload(
   fd.append("window_ms", String(windowMs));
 
   const res = await fetch("/api/upload", { method: "POST", body: fd, signal });
-  if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+  const json = (await res.json().catch(() => null)) as { taskId?: string; error?: string } | null;
 
-  const json = (await res.json().catch(() => null)) as { taskId?: string } | null;
+  if (!res.ok) throw new Error(json?.error || `Upload failed: ${res.status}`);
   if (!json?.taskId) throw new Error("Upload failed: bad response");
+
   return { taskId: json.taskId };
 }
 
@@ -143,32 +144,62 @@ async function apiTask(taskId: string, signal?: AbortSignal): Promise<TaskApiRes
     cache: "no-store",
     signal,
   });
-  if (!res.ok) throw new Error(`Task fetch failed: ${res.status}`);
-  return (await res.json()) as TaskApiResponse;
+
+  // важно: при 502/500 тоже попробуем прочитать json с error
+  const json = (await res.json().catch(() => null)) as any;
+
+  if (!res.ok) {
+    const msg = json?.error ? String(json.error) : `Task fetch failed: ${res.status}`;
+    throw new Error(msg);
+  }
+
+  if (!json || typeof json !== "object") throw new Error("Task fetch failed: bad json");
+  return json as TaskApiResponse;
 }
 
 export const useTaskStore = create<State>((set, get) => {
-  let timer: ReturnType<typeof setInterval> | null = null;
-  let pollId = 0;
-  let abort: AbortController | null = null;
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // общий “epoch” чтобы отсеивать старые async-ответы
+  let pollEpoch = 0;
+
+  // aborters
+  let uploadAbort: AbortController | null = null;
+  let pollAbort: AbortController | null = null;
+
+  // защита от параллельных тиков
+  let inFlight = false;
 
   const stopPolling = () => {
-    if (timer) {
-      clearInterval(timer);
-      timer = null;
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
     }
-    if (abort) {
-      abort.abort();
-      abort = null;
+    if (pollAbort) {
+      pollAbort.abort();
+      pollAbort = null;
+    }
+    inFlight = false;
+  };
+
+  const cancelUpload = () => {
+    if (uploadAbort) {
+      uploadAbort.abort();
+      uploadAbort = null;
     }
   };
 
   const saved = readSettings();
-  const initialModelId = typeof saved.modelId === "string" && saved.modelId.trim() ? saved.modelId : "base_like_vgg";
+  const initialModelId =
+    typeof saved.modelId === "string" && saved.modelId.trim() ? saved.modelId : "base_like_vgg";
   const initialWindowMs =
     typeof saved.windowMs === "number" && Number.isFinite(saved.windowMs)
       ? Math.max(5, Math.min(200, Math.round(saved.windowMs)))
       : 25;
+
+  const scheduleNext = (fn: () => void, ms: number) => {
+    pollTimer = setTimeout(fn, ms);
+  };
 
   return {
     status: "idle",
@@ -203,7 +234,9 @@ export const useTaskStore = create<State>((set, get) => {
     setAudioFile: (f) => set({ audioFile: f }),
 
     resetTask: () => {
+      pollEpoch += 1;
       stopPolling();
+      cancelUpload();
       set({
         status: "idle",
         taskId: null,
@@ -213,14 +246,15 @@ export const useTaskStore = create<State>((set, get) => {
         segments: [],
         features: null,
         mainEmotion: null,
-
         runModelId: null,
         runWindowMs: null,
       });
     },
 
     clearAudio: () => {
+      pollEpoch += 1;
       stopPolling();
+      cancelUpload();
       set({
         audioFile: null,
         status: "idle",
@@ -231,14 +265,15 @@ export const useTaskStore = create<State>((set, get) => {
         segments: [],
         features: null,
         mainEmotion: null,
-
         runModelId: null,
         runWindowMs: null,
       });
     },
 
     reset: () => {
+      pollEpoch += 1;
       stopPolling();
+      cancelUpload();
       set({
         status: "idle",
         taskId: null,
@@ -249,14 +284,15 @@ export const useTaskStore = create<State>((set, get) => {
         features: null,
         mainEmotion: null,
         audioFile: null,
-
         runModelId: null,
         runWindowMs: null,
       });
     },
 
     cancel: () => {
+      pollEpoch += 1;
       stopPolling();
+      cancelUpload();
       set({
         status: "idle",
         taskId: null,
@@ -268,10 +304,10 @@ export const useTaskStore = create<State>((set, get) => {
     uploadAndStart: async (file: File) => {
       if (!file) return;
 
+      // новый прогон
       get().resetTask();
 
-      pollId += 1;
-      const myPollId = pollId;
+      const myEpoch = pollEpoch;
 
       const { modelId, windowMs } = get();
       const runModelId = modelId;
@@ -285,39 +321,45 @@ export const useTaskStore = create<State>((set, get) => {
         runWindowMs,
       });
 
-      if (abort) abort.abort();
-      abort = new AbortController();
+      cancelUpload();
+      uploadAbort = new AbortController();
 
       try {
-        const { taskId } = await apiUpload(file, runModelId, runWindowMs, abort.signal);
-        if (myPollId !== pollId) return;
+        const { taskId } = await apiUpload(file, runModelId, runWindowMs, uploadAbort.signal);
+        if (myEpoch !== pollEpoch) return;
 
         set({ taskId, status: "queued" });
         get().pollTask(taskId);
       } catch (e: any) {
-        if (myPollId !== pollId) return;
-        const msg = e?.name === "AbortError" ? "Upload cancelled" : e?.message ?? "Upload error";
-        set({ status: "error", error: msg });
+        if (myEpoch !== pollEpoch) return;
+        const isAbort = e?.name === "AbortError";
+        set({ status: "error", error: isAbort ? "Upload cancelled" : e?.message ?? "Upload error" });
       }
     },
 
     pollTask: (taskId: string) => {
       if (!taskId) return;
 
+      // новый epoch для поллинга
+      pollEpoch += 1;
+      const myEpoch = pollEpoch;
+
       stopPolling();
 
-      pollId += 1;
-      const myPollId = pollId;
+      // один abort на всю сессию поллинга (только cancel/reset его убивает)
+      pollAbort = new AbortController();
 
       const tick = async () => {
-        if (myPollId !== pollId) return;
+        if (myEpoch !== pollEpoch) return;
+        if (inFlight) {
+          scheduleNext(tick, 500);
+          return;
+        }
 
-        if (abort) abort.abort();
-        abort = new AbortController();
-
+        inFlight = true;
         try {
-          const data = await apiTask(taskId, abort.signal);
-          if (myPollId !== pollId) return;
+          const data = await apiTask(taskId, pollAbort?.signal);
+          if (myEpoch !== pollEpoch) return;
 
           if (data.status === "queued" || data.status === "processing") {
             set({
@@ -325,6 +367,8 @@ export const useTaskStore = create<State>((set, get) => {
               progress: typeof data.progress === "number" ? data.progress : get().progress,
               error: null,
             });
+            inFlight = false;
+            scheduleNext(tick, 800);
             return;
           }
 
@@ -347,6 +391,7 @@ export const useTaskStore = create<State>((set, get) => {
               if (mel.length === expected) {
                 spec = { frames: w.frames, melBins: w.melBins, mel };
               } else {
+                // это уже НЕ про поллинг — это реально плохой payload
                 set({
                   status: "error",
                   error: `Bad spectrogram payload: expected ${expected} bytes, got ${mel.length}`,
@@ -366,16 +411,24 @@ export const useTaskStore = create<State>((set, get) => {
             });
           }
         } catch (e: any) {
-          if (myPollId !== pollId) return;
+          if (myEpoch !== pollEpoch) return;
+
+          const isAbort = e?.name === "AbortError";
+          // AbortError = мы сами отменили (cancel/reset). Это НЕ ошибка UI.
+          if (isAbort) {
+            inFlight = false;
+            return;
+          }
 
           stopPolling();
-          const msg = e?.name === "AbortError" ? "Polling cancelled" : e?.message ?? "Polling error";
-          set({ status: "error", error: msg });
+          set({ status: "error", error: e?.message ?? "Polling error" });
+        } finally {
+          inFlight = false;
         }
       };
 
+      // первый тик сразу
       tick();
-      timer = setInterval(tick, 800);
     },
   };
 });

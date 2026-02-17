@@ -74,9 +74,10 @@ export async function GET(
      * Запрашиваем backend-сервис по taskId.
      * encodeURIComponent обязателен, чтобы избежать проблем с спецсимволами.
      */
-    const res = await fetch(`${TASK_URL}?id=${encodeURIComponent(taskId)}`, {
+    const res = await fetch(`${TASK_URL}/${encodeURIComponent(taskId)}`, {
       method: "GET",
     });
+
 
     /**
      * Пытаемся распарсить JSON. Если backend вернёт не-JSON (или пустое тело),
