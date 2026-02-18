@@ -42,8 +42,8 @@ function segHex(label: string) {
   const k = (label || "").toLowerCase().trim();
 
   // emotions
-  if (k.includes("anger") || k.includes("rage") || k.includes("зл")) return "#EF4444";
-  if (k.includes("joy") || k.includes("happy") || k.includes("рад")) return "#F59E0B";
+  if (k.includes("angry") || k.includes("rage") || k.includes("зл")) return "#EF4444";
+  if (k.includes("positive") || k.includes("happy") || k.includes("рад")) return "#F59E0B";
   if (k.includes("sad") || k.includes("sadness") || k.includes("гру")) return "#3B82F6";
   if (k.includes("stress") || k.includes("fear") || k.includes("anx") || k.includes("стр") || k.includes("страх"))
     return "#A855F7";
@@ -61,9 +61,9 @@ function segHex(label: string) {
 function segText(label: string) {
   const k = (label || "").toLowerCase().trim();
   const map: Record<string, string> = {
-    anger: "злость",
+    angry: "злость",
     rage: "злость",
-    joy: "радость",
+    positive: "радость",
     happy: "радость",
     sadness: "грусть",
     sad: "грусть",
@@ -116,9 +116,9 @@ function isTruthLabel(label: string) {
 function isEmotionLabel(label: string) {
   const k = normLabel(label);
   return (
-    k.includes("anger") ||
+    k.includes("angry") ||
     k.includes("rage") ||
-    k.includes("joy") ||
+    k.includes("positive") ||
     k.includes("happy") ||
     k.includes("sad") ||
     k.includes("sadness") ||
@@ -227,8 +227,8 @@ function makeInfernoLUT() {
 const INFERNO_LUT = makeInfernoLUT();
 
 const LEGEND_EMOTION = [
-  { key: "anger", label: "злость" },
-  { key: "joy", label: "радость" },
+  { key: "angry", label: "злость" },
+  { key: "positive", label: "радость" },
   { key: "sadness", label: "грусть" },
   { key: "neutral", label: "нейтр" },
 ] as const;

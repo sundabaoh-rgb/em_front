@@ -30,9 +30,9 @@ function hexToRgba(hex: string, a: number) {
 function emotionMeta(em: string | null) {
   const k = (em || "").toLowerCase();
 
-  if (k.includes("anger") || k.includes("rage") || k.includes("зл"))
+  if (k.includes("angry") || k.includes("rage") || k.includes("зл"))
     return { label: "Злость", hex: "#EF4444" };
-  if (k.includes("joy") || k.includes("happy") || k.includes("рад"))
+  if (k.includes("positive") || k.includes("happy") || k.includes("рад"))
     return { label: "Радость", hex: "#F59E0B" };
   if (k.includes("sad") || k.includes("sadness") || k.includes("гру"))
     return { label: "Грусть", hex: "#3B82F6" };

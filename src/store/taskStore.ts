@@ -194,7 +194,7 @@ export const useTaskStore = create<State>((set, get) => {
     typeof saved.modelId === "string" && saved.modelId.trim() ? saved.modelId : "base_like_vgg";
   const initialWindowMs =
     typeof saved.windowMs === "number" && Number.isFinite(saved.windowMs)
-      ? Math.max(5, Math.min(200, Math.round(saved.windowMs)))
+      ? Math.max(5, Math.min(20000, Math.round(saved.windowMs)))
       : 25;
 
   const scheduleNext = (fn: () => void, ms: number) => {
@@ -223,7 +223,7 @@ export const useTaskStore = create<State>((set, get) => {
 
     windowMs: initialWindowMs,
     setWindowMs: (v) => {
-      const n = Math.max(5, Math.min(200, Math.round(Number(v) || 0)));
+      const n = Math.max(5, Math.min(20000, Math.round(Number(v) || 0)));
       set({ windowMs: n });
       writeSettings({ modelId: get().modelId, windowMs: n });
     },

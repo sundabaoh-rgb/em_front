@@ -39,9 +39,9 @@ function isTruthLabel(label: string) {
 function isEmotionLabel(label: string) {
   const k = normLabel(label);
   return (
-    k.includes("anger") ||
+    k.includes("angry") ||
     k.includes("rage") ||
-    k.includes("joy") ||
+    k.includes("positive") ||
     k.includes("happy") ||
     k.includes("sad") ||
     k.includes("sadness") ||
@@ -64,8 +64,8 @@ function isEmotionLabel(label: string) {
 function segColor(label: string) {
   const k = normLabel(label);
 
-  if (k.includes("anger") || k.includes("rage") || k.includes("зл")) return "#EF4444";
-  if (k.includes("joy") || k.includes("happy") || k.includes("рад")) return "#F59E0B";
+  if (k.includes("angry") || k.includes("rage") || k.includes("зл")) return "#EF4444";
+  if (k.includes("positive") || k.includes("happy") || k.includes("рад")) return "#F59E0B";
   if (k.includes("sad") || k.includes("sadness") || k.includes("гру")) return "#3B82F6";
   if (k.includes("stress") || k.includes("fear") || k.includes("anx") || k.includes("стр") || k.includes("трев") || k.includes("страх"))
     return "#A855F7";
