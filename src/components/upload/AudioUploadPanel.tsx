@@ -714,7 +714,7 @@ export default function AudioUploadPanel() {
                   }}
                   onBlur={() => {
                     const n = windowMsInput ? Number(windowMsInput) : NaN;
-                    const next = Number.isFinite(n) ? clamp(Math.round(n), 5, 200) : windowMs;
+                    const next = Number.isFinite(n) ? clamp(Math.round(n), 500, 10000) : windowMs;
                     setWindowMs(next);
                     setWindowMsInput(String(next));
                   }}

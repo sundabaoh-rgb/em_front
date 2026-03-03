@@ -68,7 +68,24 @@ export async function POST(req: Request) {
      */
     const upstream = new FormData();
     upstream.append("audio", file, (file as File).name || "recording.webm");
+    
     upstream.append("test_mode", "false"); //! Тестовый режим
+
+    const windowMs = form.get("window_ms");
+    if (typeof windowMs === "string" && windowMs.trim() !== "") {
+      upstream.append("window_ms", windowMs);
+    }
+
+    const model = form.get("model");
+    if (typeof model === "string" && model.trim() !== "") {
+      upstream.append("model_name", model);
+    }
+
+    const modelName = form.get("model_name");
+    if (!model && typeof modelName === "string" && modelName.trim() !== "") {
+      upstream.append("model_name", modelName);
+    }
+
 
     /**
      * Проксируем загрузку на backend.

@@ -2,6 +2,10 @@
 
 import { create } from "zustand";
 
+/* =========================
+   Types
+========================= */
+
 export type TaskStatus = "idle" | "queued" | "processing" | "done" | "error";
 
 export type Segment = {
@@ -27,9 +31,21 @@ export type Spectrogram = {
   mel: Uint8Array;
 };
 
-export type FeaturesTable = {
-  columns: string[];
-  rows: { name: string; values: (number | string)[] }[];
+export type FeaturesFile = {
+  type: "csv";
+  url: string;
+  filename?: string;
+  sizeBytes?: number;
+  expiresAt?: string;
+};
+
+export type FeaturesCache = {
+  url: string;
+  filename: string;
+  sizeBytes?: number;
+  mime: string;
+  fetchedAt: number;
+  blob: Blob;
 };
 
 export type TaskProgressResponse = {
@@ -42,8 +58,9 @@ export type TaskDoneResponse = {
   progress?: number;
   summary?: { mainEmotion?: string };
   segments?: Segment[];
-  features?: FeaturesTable;
   spectrogram?: SpectrogramWire;
+
+  featuresFile?: FeaturesFile;
 };
 
 export type TaskErrorResponse = {
@@ -53,6 +70,10 @@ export type TaskErrorResponse = {
 
 export type TaskApiResponse = TaskProgressResponse | TaskDoneResponse | TaskErrorResponse;
 
+/* =========================
+   Store State
+========================= */
+
 type State = {
   status: TaskStatus;
   taskId: string | null;
@@ -61,8 +82,11 @@ type State = {
 
   spectrogram: Spectrogram | null;
   segments: Segment[];
-  features: FeaturesTable | null;
   mainEmotion: string | null;
+
+  featuresFile: FeaturesFile | null;
+  featuresCache: FeaturesCache | null;
+  featuresCacheError: string | null;
 
   modelId: string;
   setModelId: (v: string) => void;
@@ -79,15 +103,21 @@ type State = {
   uploadAndStart: (file: File) => Promise<void>;
   pollTask: (taskId: string) => void;
 
+  prefetchFeatures: () => Promise<void>;
+  downloadFeatures: () => Promise<void>;
+
   resetTask: () => void;
   clearAudio: () => void;
   cancel: () => void;
   reset: () => void;
 };
 
+/* =========================
+   Utils
+========================= */
+
 function b64ToU8(b64: string): Uint8Array {
   if (!b64) return new Uint8Array(0);
-  // поддержим и urlsafe, и обычный base64
   let norm = b64.replace(/-/g, "+").replace(/_/g, "/");
   const pad = norm.length % 4;
   if (pad) norm += "=".repeat(4 - pad);
@@ -97,6 +127,42 @@ function b64ToU8(b64: string): Uint8Array {
   for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
   return u8;
 }
+
+function safeApiPath(url: string): string {
+  if (!url || typeof url !== "string") throw new Error("Empty features url");
+  if (!url.startsWith("/api/")) throw new Error("Unsafe features url");
+  if (url.includes("..")) throw new Error("Unsafe features url");
+  if (/[^\x21-\x7E]/.test(url)) throw new Error("Unsafe features url");
+  return url;
+}
+
+function safeFilename(name?: string, fallback = "features.csv"): string {
+  if (!name || typeof name !== "string") return fallback;
+  const base = name.split(/[\\/]/).pop() ?? fallback;
+  const cleaned = base.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 200);
+  if (!cleaned) return fallback;
+  if (!cleaned.toLowerCase().endsWith(".csv")) return `${cleaned}.csv`;
+  return cleaned;
+}
+
+const MAX_FEATURES_BYTES = 25 * 1024 * 1024;
+
+function triggerBrowserDownload(blob: Blob, filename: string) {
+  const a = document.createElement("a");
+  const objectUrl = URL.createObjectURL(blob);
+
+  a.href = objectUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+
+  a.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+/* =========================
+   LocalStorage settings
+========================= */
 
 const LS_KEY = "taskSettings:v1";
 function readSettings(): { modelId?: string; windowMs?: number } {
@@ -117,6 +183,10 @@ function writeSettings(next: { modelId: string; windowMs: number }) {
     // ignore
   }
 }
+
+/* =========================
+   API calls
+========================= */
 
 async function apiUpload(
   file: File,
@@ -145,7 +215,6 @@ async function apiTask(taskId: string, signal?: AbortSignal): Promise<TaskApiRes
     signal,
   });
 
-  // важно: при 502/500 тоже попробуем прочитать json с error
   const json = (await res.json().catch(() => null)) as any;
 
   if (!res.ok) {
@@ -157,18 +226,36 @@ async function apiTask(taskId: string, signal?: AbortSignal): Promise<TaskApiRes
   return json as TaskApiResponse;
 }
 
+/* =========================
+   Store
+========================= */
+
 export const useTaskStore = create<State>((set, get) => {
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // общий “epoch” чтобы отсеивать старые async-ответы
+  // epoch to discard stale async results
   let pollEpoch = 0;
 
   // aborters
   let uploadAbort: AbortController | null = null;
   let pollAbort: AbortController | null = null;
+  let featuresAbort: AbortController | null = null;
 
-  // защита от параллельных тиков
   let inFlight = false;
+
+  const cancelUpload = () => {
+    if (uploadAbort) {
+      uploadAbort.abort();
+      uploadAbort = null;
+    }
+  };
+
+  const cancelFeaturesPrefetch = () => {
+    if (featuresAbort) {
+      featuresAbort.abort();
+      featuresAbort = null;
+    }
+  };
 
   const stopPolling = () => {
     if (pollTimer) {
@@ -179,14 +266,9 @@ export const useTaskStore = create<State>((set, get) => {
       pollAbort.abort();
       pollAbort = null;
     }
-    inFlight = false;
-  };
+    cancelFeaturesPrefetch();
 
-  const cancelUpload = () => {
-    if (uploadAbort) {
-      uploadAbort.abort();
-      uploadAbort = null;
-    }
+    inFlight = false;
   };
 
   const saved = readSettings();
@@ -201,6 +283,89 @@ export const useTaskStore = create<State>((set, get) => {
     pollTimer = setTimeout(fn, ms);
   };
 
+  const hardResetState = (): Partial<State> => ({
+    status: "idle",
+    taskId: null,
+    progress: undefined,
+    error: null,
+    spectrogram: null,
+    segments: [],
+    mainEmotion: null,
+    featuresFile: null,
+    featuresCache: null,
+    featuresCacheError: null,
+    runModelId: null,
+    runWindowMs: null,
+  });
+
+  async function prefetchFeaturesImpl(myEpoch: number): Promise<void> {
+    if (myEpoch !== pollEpoch) return;
+
+    const ff = get().featuresFile;
+    if (!ff?.url) return;
+
+    const url = safeApiPath(ff.url);
+    const filename = safeFilename(ff.filename, "features.csv");
+
+    const cached = get().featuresCache;
+    if (cached?.url === url && cached.blob && cached.blob.size > 0) {
+      set({ featuresCacheError: null });
+      return;
+    }
+
+    cancelFeaturesPrefetch();
+    featuresAbort = new AbortController();
+
+    set({ featuresCacheError: null });
+
+    const res = await fetch(url, {
+      method: "GET",
+      credentials: "include",
+      headers: { Accept: "text/csv" },
+      signal: featuresAbort.signal,
+      cache: "no-store",
+    });
+
+    if (myEpoch !== pollEpoch) return;
+
+    if (!res.ok) {
+      const msg = await res.text().catch(() => "");
+      throw new Error(`CSV prefetch failed: ${res.status} ${msg || res.statusText}`);
+    }
+
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    if (ct.includes("text/html")) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`CSV prefetch got HTML (unexpected): ${text.slice(0, 200)}`);
+    }
+
+    const lenHeader = res.headers.get("content-length");
+    const len = lenHeader ? Number(lenHeader) : NaN;
+    if (Number.isFinite(len) && len > MAX_FEATURES_BYTES) {
+      throw new Error(`CSV too large (${len} bytes). Limit is ${MAX_FEATURES_BYTES} bytes.`);
+    }
+
+    const blob = await res.blob();
+
+    if (blob.size > MAX_FEATURES_BYTES) {
+      throw new Error(`CSV too large (${blob.size} bytes). Limit is ${MAX_FEATURES_BYTES} bytes.`);
+    }
+
+    if (myEpoch !== pollEpoch) return;
+
+    set({
+      featuresCache: {
+        url,
+        filename,
+        sizeBytes: ff.sizeBytes,
+        mime: res.headers.get("content-type") || "text/csv",
+        fetchedAt: Date.now(),
+        blob,
+      },
+      featuresCacheError: null,
+    });
+  }
+
   return {
     status: "idle",
     taskId: null,
@@ -209,8 +374,11 @@ export const useTaskStore = create<State>((set, get) => {
 
     spectrogram: null,
     segments: [],
-    features: null,
     mainEmotion: null,
+
+    featuresFile: null,
+    featuresCache: null,
+    featuresCacheError: null,
 
     audioFile: null,
 
@@ -237,56 +405,21 @@ export const useTaskStore = create<State>((set, get) => {
       pollEpoch += 1;
       stopPolling();
       cancelUpload();
-      set({
-        status: "idle",
-        taskId: null,
-        progress: undefined,
-        error: null,
-        spectrogram: null,
-        segments: [],
-        features: null,
-        mainEmotion: null,
-        runModelId: null,
-        runWindowMs: null,
-      });
+      set(hardResetState());
     },
 
     clearAudio: () => {
       pollEpoch += 1;
       stopPolling();
       cancelUpload();
-      set({
-        audioFile: null,
-        status: "idle",
-        taskId: null,
-        progress: undefined,
-        error: null,
-        spectrogram: null,
-        segments: [],
-        features: null,
-        mainEmotion: null,
-        runModelId: null,
-        runWindowMs: null,
-      });
+      set({ ...hardResetState(), audioFile: null });
     },
 
     reset: () => {
       pollEpoch += 1;
       stopPolling();
       cancelUpload();
-      set({
-        status: "idle",
-        taskId: null,
-        progress: undefined,
-        error: null,
-        spectrogram: null,
-        segments: [],
-        features: null,
-        mainEmotion: null,
-        audioFile: null,
-        runModelId: null,
-        runWindowMs: null,
-      });
+      set({ ...hardResetState(), audioFile: null });
     },
 
     cancel: () => {
@@ -304,7 +437,6 @@ export const useTaskStore = create<State>((set, get) => {
     uploadAndStart: async (file: File) => {
       if (!file) return;
 
-      // новый прогон
       get().resetTask();
 
       const myEpoch = pollEpoch;
@@ -340,17 +472,16 @@ export const useTaskStore = create<State>((set, get) => {
     pollTask: (taskId: string) => {
       if (!taskId) return;
 
-      // новый epoch для поллинга
       pollEpoch += 1;
       const myEpoch = pollEpoch;
 
       stopPolling();
 
-      // один abort на всю сессию поллинга (только cancel/reset его убивает)
       pollAbort = new AbortController();
 
       const tick = async () => {
         if (myEpoch !== pollEpoch) return;
+
         if (inFlight) {
           scheduleNext(tick, 500);
           return;
@@ -379,10 +510,12 @@ export const useTaskStore = create<State>((set, get) => {
           }
 
           if (data.status === "done") {
+            const done = data;
+
             stopPolling();
 
             let spec: Spectrogram | null = null;
-            const w = data.spectrogram;
+            const w = done.spectrogram;
 
             if (w?.format === "uint8" && typeof w.data === "string") {
               const mel = b64ToU8(w.data);
@@ -391,7 +524,6 @@ export const useTaskStore = create<State>((set, get) => {
               if (mel.length === expected) {
                 spec = { frames: w.frames, melBins: w.melBins, mel };
               } else {
-                // это уже НЕ про поллинг — это реально плохой payload
                 set({
                   status: "error",
                   error: `Bad spectrogram payload: expected ${expected} bytes, got ${mel.length}`,
@@ -402,19 +534,34 @@ export const useTaskStore = create<State>((set, get) => {
 
             set({
               status: "done",
-              progress: typeof data.progress === "number" ? data.progress : 1,
-              mainEmotion: data.summary?.mainEmotion ?? null,
-              segments: data.segments ?? [],
-              features: data.features ?? null,
+              progress: typeof done.progress === "number" ? done.progress : 1,
+              mainEmotion: done.summary?.mainEmotion ?? null,
+              segments: done.segments ?? [],
               spectrogram: spec,
+              featuresFile: done.featuresFile ?? null,
+              featuresCache: null,
+              featuresCacheError: null,
               error: null,
             });
+
+            if (done.featuresFile?.url) {
+              prefetchFeaturesImpl(myEpoch).catch((e: any) => {
+                if (myEpoch !== pollEpoch) return;
+                const isAbort = e?.name === "AbortError";
+                if (isAbort) return;
+                set({ featuresCacheError: e?.message ?? "CSV prefetch error" });
+              });
+            }
+
+            return;
           }
+
+          stopPolling();
+          set({ status: "error", error: "Task fetch failed: unknown status" });
         } catch (e: any) {
           if (myEpoch !== pollEpoch) return;
 
           const isAbort = e?.name === "AbortError";
-          // AbortError = мы сами отменили (cancel/reset). Это НЕ ошибка UI.
           if (isAbort) {
             inFlight = false;
             return;
@@ -427,8 +574,44 @@ export const useTaskStore = create<State>((set, get) => {
         }
       };
 
-      // первый тик сразу
       tick();
+    },
+
+    prefetchFeatures: async () => {
+      const myEpoch = pollEpoch;
+      try {
+        await prefetchFeaturesImpl(myEpoch);
+      } catch (e: any) {
+        if (myEpoch !== pollEpoch) return;
+        const isAbort = e?.name === "AbortError";
+        if (isAbort) return;
+        set({ featuresCacheError: e?.message ?? "CSV prefetch error" });
+        throw e;
+      }
+    },
+
+    downloadFeatures: async () => {
+      const ff = get().featuresFile;
+      if (!ff?.url) throw new Error("No features file available");
+
+      const url = safeApiPath(ff.url);
+      const filename = safeFilename(ff.filename, "features.csv");
+
+      const cached = get().featuresCache;
+      if (cached?.url === url && cached.blob && cached.blob.size > 0) {
+        triggerBrowserDownload(cached.blob, cached.filename || filename);
+        return;
+      }
+
+      const myEpoch = pollEpoch;
+      await prefetchFeaturesImpl(myEpoch);
+      const cached2 = get().featuresCache;
+      if (cached2?.url === url && cached2.blob && cached2.blob.size > 0) {
+        triggerBrowserDownload(cached2.blob, cached2.filename || filename);
+        return;
+      }
+
+      throw new Error("CSV download failed: file not cached");
     },
   };
 });

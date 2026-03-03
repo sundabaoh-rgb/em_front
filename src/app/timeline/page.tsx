@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import AppFooter from "@/components/layout/AppFooter";
 import LabelDistributionCard from "@/components/tables/LabelDistributionCard";
 import ScrollToTopFab from "@/components/ui/ScrollToTopFab";
+import FeaturesTablePanel from "@/components/features/FeaturesTablePanel";
 
 function statusTone(status: string) {
   const s = (status || "").toLowerCase();
@@ -46,8 +47,11 @@ export default function TimelinePage() {
   const reset = useTaskStore((s) => s.reset);
 
   const mainEmotion = useTaskStore((s) => s.mainEmotion);
-  const features = useTaskStore((s) => s.features);
-  const segments = useTaskStore((s) => s.segments) as any[] | undefined;
+  const segments = useTaskStore((s) => s.segments);
+
+  // NEW: csv file link + cache info (optional use for KPI/badges)
+  const featuresFile = useTaskStore((s) => s.featuresFile);
+  const featuresCache = useTaskStore((s) => s.featuresCache);
 
   const runModelId = useTaskStore((s) => s.runModelId);
   const runWindowMs = useTaskStore((s) => s.runWindowMs);
@@ -65,8 +69,8 @@ export default function TimelinePage() {
       if (!j) return;
 
       scrollByTabRef.current = {
-        timeline: typeof j.scroll?.timeline === "number" ? j.scroll!.timeline! : 0,
-        low: typeof j.scroll?.low === "number" ? j.scroll!.low! : 0,
+        timeline: typeof j.scroll?.timeline === "number" ? j.scroll.timeline : 0,
+        low: typeof j.scroll?.low === "number" ? j.scroll.low : 0,
       };
 
       if (j.tab === "timeline" || j.tab === "low") {
@@ -74,6 +78,7 @@ export default function TimelinePage() {
         setTab(j.tab);
       }
     } catch {
+      // ignore
     }
   }, []);
 
@@ -89,7 +94,9 @@ export default function TimelinePage() {
             SCROLL_KEY,
             JSON.stringify({ tab: activeTabRef.current, scroll: scrollByTabRef.current })
           );
-        } catch {}
+        } catch {
+          // ignore
+        }
       });
     };
 
@@ -111,7 +118,9 @@ export default function TimelinePage() {
 
     try {
       sessionStorage.setItem(SCROLL_KEY, JSON.stringify({ tab: nextTab, scroll: scrollByTabRef.current }));
-    } catch {}
+    } catch {
+      // ignore
+    }
   };
 
   useEffect(() => {
@@ -124,12 +133,12 @@ export default function TimelinePage() {
         window.scrollTo({ top, behavior: "auto" });
       });
 
-      (window as any).__tabScrollR2 = r2;
+      (window as unknown as { __tabScrollR2?: number }).__tabScrollR2 = r2;
     });
 
     return () => {
       cancelAnimationFrame(r1);
-      const r2 = (window as any).__tabScrollR2;
+      const r2 = (window as unknown as { __tabScrollR2?: number }).__tabScrollR2;
       if (typeof r2 === "number") cancelAnimationFrame(r2);
     };
   }, [tab]);
@@ -140,12 +149,17 @@ export default function TimelinePage() {
 
   const kpi = useMemo(() => {
     const segCount = segments?.length ?? 0;
-    const cols = features?.columns?.length ?? 0;
-    const rows = features?.rows?.length ?? 0;
+
+    // we no longer know rows/cols without parsing CSV;
+    // show what we reliably have (frames/bins) + CSV availability/cached size.
     const frames = spectrogram?.frames ?? "—";
     const bins = spectrogram?.melBins ?? "—";
-    return { segCount, cols, rows, frames, bins };
-  }, [segments, features, spectrogram]);
+
+    const hasCsv = Boolean(featuresFile?.url);
+    const cachedKb = featuresCache?.blob?.size ? Math.round(featuresCache.blob.size / 1024) : null;
+
+    return { segCount, frames, bins, hasCsv, cachedKb };
+  }, [segments, spectrogram, featuresFile, featuresCache]);
 
   const sourceLabel = spectrogram ? "server" : "demo";
 
@@ -157,7 +171,7 @@ export default function TimelinePage() {
         <Tabs value={tab} onValueChange={onTabChange} className="space-y-4">
           <div
             id="timeline-tabs"
-            className="sticky top-0 z-20 -mx-3 px-3 py-2 md:-mx-6 md:px-6 2xl:-mx-10 2xl:px-10 bg-muted/30 backdrop-blur supports-[backdrop-filter]:bg-muted/20"
+            className="sticky top-0 z-70 -mx-3 px-3 py-2 md:-mx-6 md:px-6 2xl:-mx-10 2xl:px-10 bg-muted/30 backdrop-blur supports-[backdrop-filter]:bg-muted/20"
           >
             <TabsList className="w-full sm:w-auto rounded-xl bg-background/70 border p-1 shadow-sm">
               <TabsTrigger value="timeline" className="rounded-lg px-3">
@@ -237,6 +251,13 @@ export default function TimelinePage() {
                           {typeof runWindowMs === "number" ? `${runWindowMs} ms` : "—"}
                         </span>
                       </div>
+
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-muted-foreground">CSV</span>
+                        <span className="font-medium">
+                          {kpi.hasCsv ? (kpi.cachedKb ? `cached ~${kpi.cachedKb} KB` : "available") : "—"}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -244,7 +265,6 @@ export default function TimelinePage() {
             </Card>
 
             <LabelDistributionCard defaultMetric="emotion" />
-
           </TabsContent>
 
           <TabsContent value="low">
@@ -252,13 +272,19 @@ export default function TimelinePage() {
               <CardHeader className="border-b">
                 <CardTitle>Низкоуровневые признаки</CardTitle>
               </CardHeader>
-              <CardContent className="text-sm text-muted-foreground p-5">
-                <RightPanel tableOnly title="Низкоуровневые дескрипторы" />
+
+              {/* IMPORTANT: CardContent must not be muted text globally; table needs normal colors */}
+              <CardContent className="p-5 space-y-4">
+                {/* If RightPanel is still useful for non-table stuff, keep it without tableOnly */}
+                {/* <RightPanel title="Сводка" /> */}
+                {/* New full featured CSV viewer */}
+                <FeaturesTablePanel />
               </CardContent>
             </Card>
           </TabsContent>
         </Tabs>
       </div>
+
       <ScrollToTopFab />
 
       <AppFooter
