@@ -1063,7 +1063,6 @@ export default function FeaturesTablePanel() {
 
   return (
     <Card className="w-full">
-      {/* GLOBAL: убираем focus-visible подсветки снаружи Sheet, когда он открыт */}
       <style jsx global>{`
         html[data-ft-sheet-open="1"] *:focus-visible {
           outline: none !important;
@@ -1640,7 +1639,7 @@ export default function FeaturesTablePanel() {
             if (!open) setActiveCell(null);
           }}
         >
-          <SheetContent data-ft-sheet="1" side="right" className="w-[420px] sm:w-[520px]">
+          <SheetContent data-ft-sheet="1" side="right" className="w-[420px] sm:w-[520px] z-3000">
             <SheetHeader>
               <SheetTitle>
                 {activeCell
@@ -1721,7 +1720,7 @@ export default function FeaturesTablePanel() {
                 <div className="rounded-xl border p-3">
                   <div className="text-sm font-medium mb-2">Values preview</div>
                   <div className="text-xs text-muted-foreground mb-2">
-                    First 300 non-empty values (UI safety).
+                    First 300 non-empty values.
                   </div>
 
                   <div className="max-h-[55vh] overflow-auto pr-2 space-y-1">
