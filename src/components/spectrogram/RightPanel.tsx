@@ -13,6 +13,22 @@ type RightPanelProps = {
   title?: string;
 };
 
+type FeatureRow = {
+  name?: string;
+  values?: Array<string | number | null | undefined>;
+};
+
+type FeaturesData = {
+  columns?: string[];
+  rows?: FeatureRow[];
+};
+
+type TaskStoreWithFeatures = {
+  mainEmotion?: string | null;
+  status?: string;
+  features?: FeaturesData | null;
+};
+
 function statusTone(status: string) {
   const s = (status || "").toLowerCase();
   if (s.includes("error") || s.includes("fail")) return "destructive" as const;
@@ -31,22 +47,29 @@ function fmt(v: string) {
 }
 
 export default function RightPanel({ summaryOnly, tableOnly, title }: RightPanelProps) {
-  const mainEmotion = useTaskStore((s) => s.mainEmotion);
-  const features = useTaskStore((s) => s.features);
-  const status = useTaskStore((s) => s.status);
+  const mainEmotion = useTaskStore((s) => (s as TaskStoreWithFeatures).mainEmotion);
+  const features = useTaskStore((s) => (s as TaskStoreWithFeatures).features);
+  const status = useTaskStore((s) => (s as TaskStoreWithFeatures).status);
 
   const { headerCols, rows, colSpan } = useMemo(() => {
-    const cols = features?.columns ?? [];
+    const cols = Array.isArray(features?.columns) ? features.columns : [];
     const safeCols = cols.length ? cols : ["—", "—", "—"];
 
-    const safeRows =
-      (features?.rows ?? []).map((r) => {
-        const vals = Array.isArray(r.values) ? r.values.map(String) : [];
-        const padded = Array.from({ length: safeCols.length }, (_, i) => vals[i] ?? "—");
-        return { name: r.name ?? "—", values: padded };
-      }) ?? [];
+    const safeRows = (Array.isArray(features?.rows) ? features.rows : []).map((r: FeatureRow) => {
+      const vals = Array.isArray(r.values) ? r.values.map((v) => String(v ?? "—")) : [];
+      const padded = Array.from({ length: safeCols.length }, (_, i) => vals[i] ?? "—");
 
-    return { headerCols: safeCols, rows: safeRows, colSpan: 1 + safeCols.length };
+      return {
+        name: r.name ?? "—",
+        values: padded,
+      };
+    });
+
+    return {
+      headerCols: safeCols,
+      rows: safeRows,
+      colSpan: 1 + safeCols.length,
+    };
   }, [features]);
 
   const hasData =
@@ -56,8 +79,13 @@ export default function RightPanel({ summaryOnly, tableOnly, title }: RightPanel
 
   const downloadCsv = useCallback(() => {
     if (!features?.columns?.length || !features?.rows?.length) return;
+
     const headers = ["name", ...features.columns];
-    const rowsForCsv = features.rows.map((r) => [r.name ?? "", ...((r.values ?? []) as any[])]);
+    const rowsForCsv = features.rows.map((r: FeatureRow) => [
+      r.name ?? "",
+      ...(Array.isArray(r.values) ? r.values : []),
+    ]);
+
     downloadCsvFile("features.csv", headers, rowsForCsv);
   }, [features]);
 
@@ -70,7 +98,7 @@ export default function RightPanel({ summaryOnly, tableOnly, title }: RightPanel
         <CardTitle className="flex items-center justify-between gap-3">
           <span className="flex items-center gap-2">
             {title ?? "Анализ"}
-            {!tableOnly ? <Badge variant={statusTone(String(status))}>{String(status)}</Badge> : null}
+            {!tableOnly ? <Badge variant={statusTone(String(status ?? ""))}>{String(status ?? "—")}</Badge> : null}
           </span>
 
           <Button size="sm" variant="secondary" onClick={downloadCsv} disabled={!hasData}>
@@ -101,7 +129,7 @@ export default function RightPanel({ summaryOnly, tableOnly, title }: RightPanel
                       <th className="text-left font-medium px-4 py-3 text-muted-foreground">
                         Feature
                       </th>
-                      {headerCols.map((c, i) => (
+                      {headerCols.map((c: string, i: number) => (
                         <th
                           key={`${c}-${i}`}
                           className="text-right font-medium px-4 py-3 text-muted-foreground tabular-nums"
@@ -113,13 +141,13 @@ export default function RightPanel({ summaryOnly, tableOnly, title }: RightPanel
                   </thead>
 
                   <tbody>
-                    {rows.map((r, ri) => (
+                    {rows.map((r: { name: string; values: string[] }, ri: number) => (
                       <tr
                         key={`${r.name}-${ri}`}
                         className="border-b last:border-b-0 hover:bg-muted/40"
                       >
                         <td className="px-4 py-3 font-medium">{r.name}</td>
-                        {r.values.map((v, vi) => (
+                        {r.values.map((v: string, vi: number) => (
                           <td key={`${r.name}-${vi}`} className="px-4 py-3 text-right tabular-nums">
                             {v === "—" ? (
                               <span className="text-muted-foreground">-</span>
