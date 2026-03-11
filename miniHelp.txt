@@ -1,12 +1,4 @@
-docker build -t front .
+docker build -t spectro-front .  
 
-winda
-docker run -p 3000:3000 ^
-  -e BACKEND_UPLOAD_URL=http://host.docker.internal:8080/api/upload ^
-  front
-
-linuxa
-docker run -p 3000:3000 \
-  -e BACKEND_UPLOAD_URL=http://host.docker.internal:8080/api/upload \
-  front
+docker run -d --name spectro-front --restart unless-stopped -p 3000:3000 spectro-front
 
