@@ -1,4 +1,4 @@
 docker build -t spectro-front .  
 
 
-docker run -d --name spectro-front -p 3000:3000 -e BACKEND_UPLOAD_URL=http://host.docker.internal:8080/api/upload spectro-front
+docker run -d --name spectro-front -p 3000:3000 -e BACKEND_TASK_URL=http://host.docker.internal:8080/api/upload -e BACKEND_UPLOAD_URL=http://host.docker.internal:8080/api/upload spectro-front

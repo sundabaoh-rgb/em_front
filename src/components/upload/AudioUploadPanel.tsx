@@ -2,6 +2,7 @@
 
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useTaskStore } from "@/store/taskStore";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +21,8 @@ import {
   Settings2,
   Sparkles,
   Loader2,
+  RotateCcw,
+  ArrowUpRight,
 } from "lucide-react";
 
 /* ---------------- utils ---------------- */
@@ -48,14 +51,6 @@ function formatDuration(sec: number) {
 
 function isValidDuration(d: number) {
   return Number.isFinite(d) && d > 0 && d !== Infinity;
-}
-
-function statusTone(status: string) {
-  const s = (status || "").toLowerCase();
-  if (s.includes("error") || s.includes("fail")) return "destructive" as const;
-  if (s.includes("done") || s.includes("success") || s.includes("complete")) return "secondary" as const;
-  if (s.includes("run") || s.includes("process") || s.includes("progress")) return "default" as const;
-  return "outline" as const;
 }
 
 function fileKey(f: File) {
@@ -264,6 +259,7 @@ export default function AudioUploadPanel() {
   useEffect(() => setWindowMsInput(String(windowMs)), [windowMs]);
 
   const isBusy = !!taskId && (status === "queued" || status === "processing");
+  const isDone = status === "done";
 
   const [dragActive, setDragActive] = useState(false);
   const dragDepthRef = useRef(0);
@@ -455,7 +451,7 @@ export default function AudioUploadPanel() {
 
   const progress01 = totalTime > 0 ? clamp(curTime / totalTime, 0, 1) : 0;
 
-  /* -------- синхронизация с WaveformPanel -------- */
+  /* -------- синхронизация с WaveformPanel и SpectrogramPanel -------- */
   useEffect(() => {
     window.dispatchEvent(
       new CustomEvent("em-audio-state", {
@@ -653,9 +649,9 @@ export default function AudioUploadPanel() {
 
   const MODEL_OPTIONS = useMemo(
     () => [
-      { id: "base_like_vgg", label: "base_like_vgg" },
-      { id: "base_like_vgg_v2", label: "base_like_vgg_v2" },
-      { id: "opensmile_mfcc120", label: "opensmile_mfcc120" },
+      { id: "base_like_vgg", label: "VGG-Base (базовая)" },
+      { id: "base_like_vgg_v2", label: "VGG-v2 (точная)" },
+      { id: "opensmile_mfcc120", label: "openSMILE (MFCC-120)" },
     ],
     []
   );
@@ -710,18 +706,21 @@ export default function AudioUploadPanel() {
               </p>
             </div>
 
-            <Badge variant={isBusy ? "default" : statusTone(String(status || "ready"))} className="shrink-0">
-              {isBusy ? "анализ…" : String(status || "ready")}
+            <Badge variant={file ? "secondary" : "outline"} className="shrink-0">
+              {isBusy ? "Анализ…" : file ? "Готов к пуску" : "Нет файла"}
             </Badge>
           </div>
         </CardHeader>
 
-        <CardContent className="p-5 space-y-5">
-          {/* Компактный блок настроек */}
+        <CardContent className="p-5 space-y-4">
+          {/* Блок настроек с быстрыми пресетами окна */}
           <div className="rounded-xl bg-slate-100/70 p-3.5 border border-slate-200/60 space-y-3">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              <Settings2 className="h-3.5 w-3.5" />
-              <span>Параметры модели</span>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <Settings2 className="h-3.5 w-3.5" />
+                <span>Параметры модели</span>
+              </div>
+              <span className="text-[11px] font-mono text-muted-foreground">{modelId}</span>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
@@ -741,8 +740,31 @@ export default function AudioUploadPanel() {
                 </select>
               </label>
 
-              <label className="grid gap-1.5">
-                <span className="text-xs font-medium text-foreground/80">Окно анализа (мс)</span>
+              <div className="grid gap-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-foreground/80">Окно (мс)</span>
+                  <div className="flex items-center gap-1">
+                    {[1000, 3000, 5000].map((ms) => (
+                      <button
+                        key={ms}
+                        type="button"
+                        onClick={() => {
+                          setWindowMs(ms);
+                          setWindowMsInput(String(ms));
+                        }}
+                        disabled={isBusy}
+                        className={`cursor-pointer rounded px-1.5 py-0.5 text-[10px] font-medium transition ${
+                          windowMs === ms
+                            ? "bg-primary text-primary-foreground shadow-2xs"
+                            : "bg-white text-muted-foreground hover:text-foreground border border-slate-200/80"
+                        }`}
+                      >
+                        {ms / 1000}с
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 <input
                   className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium tabular-nums shadow-2xs outline-none transition focus:border-primary focus:ring-2 focus:ring-ring/20"
                   value={windowMsInput}
@@ -765,14 +787,24 @@ export default function AudioUploadPanel() {
                   disabled={isBusy}
                   placeholder="3000"
                 />
-              </label>
+              </div>
             </div>
           </div>
 
-          {/* Зона загрузки файла */}
+          {/* Скрытый input для выбора файла */}
+          <input
+            ref={inputRef}
+            type="file"
+            accept="audio/*"
+            className="hidden"
+            onChange={(e) => onPick(e.target.files?.[0] ?? null)}
+          />
+
+          {/* Зона загрузки файла (компактная, если файл уже выбран) */}
           <div
             className={[
-              "rounded-xl border-2 border-dashed p-4 transition-all",
+              "rounded-xl border-2 border-dashed transition-all",
+              file ? "p-3" : "p-4",
               dragActive
                 ? "border-primary bg-primary/5"
                 : "border-slate-200 hover:border-slate-300 bg-slate-50/40",
@@ -782,53 +814,84 @@ export default function AudioUploadPanel() {
             onDragLeave={onDragLeave}
             onDrop={onDrop}
           >
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white border border-slate-200/80 shadow-2xs text-foreground">
-                  {file ? <FileAudio2 className="h-5 w-5 text-primary" /> : <Upload className="h-5 w-5 text-muted-foreground" />}
+            {!file ? (
+              <>
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white border border-slate-200/80 shadow-2xs text-muted-foreground">
+                    <Upload className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium truncate">Перетащите аудио сюда</div>
+                    <div className="text-xs text-muted-foreground truncate">
+                      Поддерживаются WAV, MP3, WebM, OGG
+                    </div>
+                  </div>
                 </div>
-                <div className="min-w-0">
-                  <div className="text-sm font-medium truncate">
-                    {file ? "Аудиофайл готов" : "Перетащите аудио сюда"}
+
+                <div className="mt-3.5 grid grid-cols-2 gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => inputRef.current?.click()}
+                    className="w-full bg-white"
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    Выбрать файл
+                  </Button>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setRecOpen(true)}
+                    className="w-full bg-white"
+                  >
+                    <Mic className="h-3.5 w-3.5 text-red-500" />
+                    Записать
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white border border-slate-200/80 text-primary shadow-2xs">
+                    <FileAudio2 className="h-4 w-4" />
                   </div>
-                  <div className="text-xs text-muted-foreground truncate">
-                    {file ? "Можно заменить файл или записать заново" : "WAV, MP3, WebM, OGG"}
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold truncate">Аудиофайл готов</div>
+                    <div className="text-[11px] text-muted-foreground truncate">
+                      Заменить или записать новый
+                    </div>
                   </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    onClick={() => inputRef.current?.click()}
+                    className="bg-white h-7 px-2.5"
+                    disabled={isBusy}
+                  >
+                    <Upload className="h-3 w-3" />
+                    Файл
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    onClick={() => setRecOpen(true)}
+                    className="bg-white h-7 px-2.5"
+                    disabled={isBusy}
+                  >
+                    <Mic className="h-3 w-3 text-red-500" />
+                    Запись
+                  </Button>
                 </div>
               </div>
-            </div>
-
-            <div className="mt-3.5 grid grid-cols-2 gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => inputRef.current?.click()}
-                className="w-full bg-white"
-              >
-                <Upload className="h-3.5 w-3.5" />
-                Выбрать файл
-              </Button>
-
-              <input
-                ref={inputRef}
-                type="file"
-                accept="audio/*"
-                className="hidden"
-                onChange={(e) => onPick(e.target.files?.[0] ?? null)}
-              />
-
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setRecOpen(true)}
-                className="w-full bg-white"
-              >
-                <Mic className="h-3.5 w-3.5 text-red-500" />
-                Записать
-              </Button>
-            </div>
+            )}
           </div>
 
           {/* Карточка выбранного файла и двухрядный плеер */}
@@ -995,7 +1058,7 @@ export default function AudioUploadPanel() {
                     </div>
 
                     <div className="flex items-center justify-between text-[11px] text-muted-foreground tabular-nums">
-                      <span>{isPlaying ? "воспроизведение" : "пауза (клик по волне = старт)"}</span>
+                      <span>{isPlaying ? "воспроизведение" : "клик по графику справа — перемотка"}</span>
                       <span>{remainingText || formatDuration(totalTime)}</span>
                     </div>
                   </div>
@@ -1004,17 +1067,38 @@ export default function AudioUploadPanel() {
             </div>
           ) : null}
 
-          {/* Кнопка отправки */}
+          {/* Кнопки запуска / перезапуска */}
           {!isBusy ? (
-            <Button
-              className="group relative w-full h-10 gap-2 overflow-hidden shadow-sm transition-all hover:shadow-md"
-              onClick={onStart}
-              disabled={!file}
-            >
-              <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/20 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
-              <Sparkles className="h-4 w-4 transition-transform duration-300 group-hover:rotate-12 group-hover:scale-110" />
-              <span>Отправить на обработку</span>
-            </Button>
+            isDone ? (
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  variant="outline"
+                  className="h-10 gap-1.5 bg-white text-xs font-medium"
+                  onClick={onStart}
+                  disabled={!file}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  <span>Перезапустить</span>
+                </Button>
+
+                <Button asChild className="h-10 gap-1.5 text-xs font-medium shadow-xs">
+                  <Link href="/timeline">
+                    <span>Полный разбор</span>
+                    <ArrowUpRight className="h-3.5 w-3.5" />
+                  </Link>
+                </Button>
+              </div>
+            ) : (
+              <Button
+                className="group relative w-full h-10 gap-2 overflow-hidden shadow-sm transition-all hover:shadow-md"
+                onClick={onStart}
+                disabled={!file}
+              >
+                <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/20 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
+                <Sparkles className="h-4 w-4 transition-transform duration-300 group-hover:rotate-12 group-hover:scale-110" />
+                <span>Отправить на обработку</span>
+              </Button>
+            )
           ) : (
             <div className="grid grid-cols-[1fr_auto] gap-2">
               <Button className="w-full h-10 gap-2" disabled>

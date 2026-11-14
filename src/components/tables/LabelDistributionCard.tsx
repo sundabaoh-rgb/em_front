@@ -5,16 +5,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { useTaskStore } from "@/store/taskStore";
+import { PieChart, Sparkles } from "lucide-react";
 
 type Metric = "emotion" | "truth";
 
-function clamp(v: number, a: number, b: number) {
-  return Math.max(a, Math.min(b, v));
-}
-
 function fmtSec(s: number) {
   if (!Number.isFinite(s) || s < 0) return "—";
-  if (s < 60) return `${s.toFixed(1)}s`;
+  if (s < 60) return `${s.toFixed(1)}с`;
   const m = Math.floor(s / 60);
   const ss = Math.floor(s - m * 60);
   return `${m}:${String(ss).padStart(2, "0")}`;
@@ -61,25 +58,40 @@ function isEmotionLabel(label: string) {
   );
 }
 
-function segColor(label: string) {
-  const k = normLabel(label);
+function resolveLabelMeta(rawLabel: string): { key: string; title: string; color: string } {
+  const k = normLabel(rawLabel);
 
-  if (k.includes("angry") || k.includes("rage") || k.includes("зл")) return "#EF4444";
-  if (k.includes("positive") || k.includes("happy") || k.includes("рад")) return "#F59E0B";
-  if (k.includes("sad") || k.includes("sadness") || k.includes("гру")) return "#3B82F6";
-  if (k.includes("stress") || k.includes("fear") || k.includes("anx") || k.includes("стр") || k.includes("трев") || k.includes("страх"))
-    return "#A855F7";
-  if (k.includes("calm") || k.includes("neutral") || k.includes("нейт") || k.includes("спок")) return "#94A3B8";
+  if (k.includes("angry") || k.includes("rage") || k.includes("зл"))
+    return { key: "angry", title: "Злость", color: "#EF4444" };
+  if (k.includes("positive") || k.includes("happy") || k.includes("рад"))
+    return { key: "happy", title: "Радость", color: "#F59E0B" };
+  if (k.includes("sad") || k.includes("sadness") || k.includes("гру"))
+    return { key: "sad", title: "Грусть", color: "#3B82F6" };
+  if (
+    k.includes("stress") ||
+    k.includes("fear") ||
+    k.includes("anx") ||
+    k.includes("стр") ||
+    k.includes("трев") ||
+    k.includes("страх")
+  )
+    return { key: "stress", title: "Стресс / Тревога", color: "#A855F7" };
+  if (k.includes("calm") || k.includes("neutral") || k.includes("нейт") || k.includes("спок"))
+    return { key: "neutral", title: "Спокойствие", color: "#64748B" };
 
-  if (k.includes("truth") || k === "true" || k.includes("ист")) return "#22D3EE";
-  if (k.includes("lie") || k === "false" || k.includes("лож")) return "#0F172A";
+  if (k.includes("truth") || k === "true" || k.includes("ист"))
+    return { key: "truth", title: "Истина", color: "#06B6D4" };
+  if (k.includes("lie") || k === "false" || k.includes("лож"))
+    return { key: "lie", title: "Ложь", color: "#0F172A" };
 
-  return "#64748B";
+  return { key: k || "other", title: rawLabel || "Прочее", color: "#94A3B8" };
 }
 
 type Row = {
-  label: string;
+  key: string;
+  title: string;
   frames: number;
+  count: number;
   sec: number;
   color: string;
 };
@@ -94,12 +106,13 @@ export default function LabelDistributionCard(props: {
     defaultMetric = "emotion",
     frameSec = 0.016,
     topN = 6,
-    title = "Распределение по меткам",
+    title = "Распределение по классам",
   } = props;
 
   const segments = useTaskStore((s) => s.segments) as any[] | undefined;
 
   const [metric, setMetric] = useState<Metric>(defaultMetric);
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
 
   const computed = useMemo(() => {
     const segs = (segments ?? []).filter((s) => {
@@ -108,18 +121,34 @@ export default function LabelDistributionCard(props: {
       return metric === "emotion" ? isEmotionLabel(label) : isTruthLabel(label);
     });
 
-    const byLabel = new Map<string, number>();
+    const byKey = new Map<string, { title: string; color: string; frames: number; count: number }>();
+
     for (const s of segs) {
       const label = String(s?.label ?? "");
       const a = Number(s?.startFrame ?? 0);
       const b = Number(s?.endFrame ?? 0);
       const len = Math.max(0, Math.floor(b) - Math.floor(a));
       if (!label || len <= 0) continue;
-      byLabel.set(label, (byLabel.get(label) ?? 0) + len);
+
+      const meta = resolveLabelMeta(label);
+      const prev = byKey.get(meta.key);
+      if (prev) {
+        prev.frames += len;
+        prev.count += 1;
+      } else {
+        byKey.set(meta.key, { title: meta.title, color: meta.color, frames: len, count: 1 });
+      }
     }
 
-    const rowsAll: Row[] = Array.from(byLabel.entries())
-      .map(([label, frames]) => ({ label, frames, sec: frames * frameSec, color: segColor(label) }))
+    const rowsAll: Row[] = Array.from(byKey.entries())
+      .map(([key, v]) => ({
+        key,
+        title: v.title,
+        frames: v.frames,
+        count: v.count,
+        sec: v.frames * frameSec,
+        color: v.color,
+      }))
       .sort((a, b) => b.frames - a.frames);
 
     const totalFrames = rowsAll.reduce((acc, r) => acc + r.frames, 0);
@@ -128,33 +157,38 @@ export default function LabelDistributionCard(props: {
     const top = rowsAll.slice(0, topN);
     const rest = rowsAll.slice(topN);
     const restFrames = rest.reduce((acc, r) => acc + r.frames, 0);
+    const restCount = rest.reduce((acc, r) => acc + r.count, 0);
 
     const rows: Row[] =
       restFrames > 0
         ? [
             ...top,
             {
-              label: "other",
+              key: "other",
+              title: "Остальные",
               frames: restFrames,
+              count: restCount,
               sec: restFrames * frameSec,
               color: "#CBD5E1",
             },
           ]
         : top;
 
-    // donut
-    const size = 124;
-    const stroke = 14;
-    const r = (size - stroke) / 2;
+    // Параметры кольцевой диаграммы (Donut)
+    const size = 148;
+    const stroke = 16;
+    const r = (size - stroke - 8) / 2;
     const c = 2 * Math.PI * r;
+    const padPx = rows.length > 1 ? 3 : 0;
 
     let acc = 0;
     const arcs = rows.map((p) => {
       const frac = p.frames / base;
-      const dash = frac * c;
-      const gap = c - dash;
+      const rawDash = frac * c;
+      const dash = Math.max(1, rawDash - padPx);
+      const gap = Math.max(0, c - dash);
       const start = acc;
-      acc += dash;
+      acc += rawDash;
       return { ...p, pct: frac * 100, dash, gap, offset: -start };
     });
 
@@ -165,151 +199,217 @@ export default function LabelDistributionCard(props: {
 
   const segCount = computed.segs.length;
 
+  const activeItem = useMemo(() => {
+    if (hoveredKey) {
+      const found = computed.arcs.find((a) => a.key === hoveredKey);
+      if (found) return found;
+    }
+    if (!computed.top1) return null;
+    return {
+      ...computed.top1,
+      pct: (computed.top1.frames / computed.base) * 100,
+    };
+  }, [hoveredKey, computed]);
+
   return (
-    <Card className="rounded-2xl border bg-background shadow-sm overflow-hidden">
-      <CardHeader className="border-b">
+    <Card className="overflow-hidden">
+      <CardHeader className="border-b bg-slate-50/50 py-3.5 px-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <CardTitle className="text-base">{title}</CardTitle>
+          <div className="flex items-center gap-2.5 min-w-0">
+            <PieChart className="h-4 w-4 text-sky-600 shrink-0" />
+            <div>
+              <CardTitle className="text-base">{title}</CardTitle>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Суммарное время и доля каждого класса в аудиозаписи
+              </p>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             <Tabs value={metric} onValueChange={(v) => setMetric(v as Metric)}>
-              <TabsList className="rounded-xl bg-background/70 border p-1">
-                <TabsTrigger value="emotion" className="rounded-lg px-3">
+              <TabsList className="rounded-xl bg-slate-200/70 p-1 h-8">
+                <TabsTrigger value="emotion" className="rounded-lg px-3 text-xs">
                   Эмоции
                 </TabsTrigger>
-                <TabsTrigger value="truth" className="rounded-lg px-3">
+                <TabsTrigger value="truth" className="rounded-lg px-3 text-xs">
                   Истинность
                 </TabsTrigger>
               </TabsList>
             </Tabs>
 
-            <Badge variant="outline" className="tabular-nums">
+            <Badge variant="outline" className="bg-white tabular-nums">
               {segCount} сегм.
             </Badge>
           </div>
         </div>
       </CardHeader>
 
-      <CardContent className="p-4 md:p-6">
+      <CardContent className="p-5">
         {segCount === 0 ? (
-          <div className="text-sm text-muted-foreground">
-            Нет сегментов для выбранной метрики.
+          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/40 py-10 text-center text-xs text-muted-foreground">
+            Нет размеченных сегментов для выбранного режима («{metric === "emotion" ? "Эмоции" : "Истинность"}»).
           </div>
         ) : (
-          <div className="grid gap-4 lg:grid-cols-[1fr_280px] lg:items-start">
-            <div className="space-y-2">
-              {computed.rows.map((r) => {
-                const pct = (r.frames / computed.base) * 100;
+          <div className="space-y-4">
+            {/* Единая мульти-шкала баланса всех классов */}
+            <div className="space-y-1.5">
+              <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-slate-100 p-0.5 ring-1 ring-slate-200/70 gap-0.5">
+                {computed.arcs.map((a) => (
+                  <div
+                    key={a.key}
+                    onMouseEnter={() => setHoveredKey(a.key)}
+                    onMouseLeave={() => setHoveredKey(null)}
+                    className="h-full first:rounded-l-full last:rounded-r-full transition-opacity cursor-pointer"
+                    style={{
+                      width: `${Math.max(1.5, a.pct)}%`,
+                      backgroundColor: a.color,
+                      opacity: hoveredKey && hoveredKey !== a.key ? 0.35 : 1,
+                    }}
+                    title={`${a.title}: ${a.pct.toFixed(1)}% (${fmtSec(a.sec)})`}
+                  />
+                ))}
+              </div>
+            </div>
 
-                return (
-                  <div key={r.label} className="rounded-2xl border bg-muted/10 px-3 py-2.5">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: r.color }} />
-                        <div className="min-w-0">
-                          <div className="text-sm font-medium truncate">{r.label}</div>
-                          <div className="text-[11px] text-muted-foreground tabular-nums">{r.frames} frames</div>
+            <div className="grid gap-4 lg:grid-cols-[1fr_300px] lg:items-stretch">
+              {/* Список классов с контрастными прогресс-барами */}
+              <div className="grid gap-2.5 sm:grid-cols-2 content-start">
+                {computed.rows.map((r) => {
+                  const pct = (r.frames / computed.base) * 100;
+                  const isHovered = hoveredKey === r.key;
+
+                  return (
+                    <div
+                      key={r.key}
+                      onMouseEnter={() => setHoveredKey(r.key)}
+                      onMouseLeave={() => setHoveredKey(null)}
+                      className={`rounded-xl border p-3 transition-all cursor-default ${
+                        isHovered
+                          ? "border-slate-300 bg-slate-50/90 shadow-2xs"
+                          : "border-slate-200/80 bg-white hover:bg-slate-50/50"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span
+                            className="h-3 w-3 rounded-full shrink-0 ring-2 ring-offset-1 ring-transparent"
+                            style={{ backgroundColor: r.color }}
+                          />
+                          <div className="min-w-0">
+                            <div className="text-xs font-semibold text-foreground truncate">
+                              {r.title}
+                            </div>
+                            <div className="text-[11px] text-muted-foreground tabular-nums">
+                              {r.count} сегм. • {r.frames} кадр.
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="text-right tabular-nums shrink-0">
+                          <div className="text-xs font-bold text-foreground">
+                            {pct.toFixed(1)}%
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {fmtSec(r.sec)}
+                          </div>
                         </div>
                       </div>
 
-                      <div className="text-right tabular-nums">
-                        <div className="text-sm font-medium">{fmtSec(r.sec)}</div>
-                        <div className="text-[11px] text-muted-foreground">{pct.toFixed(1)}%</div>
+                      <div className="mt-2.5 h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{
+                            width: `${pct}%`,
+                            backgroundColor: r.color,
+                          }}
+                        />
                       </div>
                     </div>
-
-                    <div className="mt-2 h-1.5 w-full rounded-full bg-muted/40 overflow-hidden">
-                      <div
-                        className="h-1.5 rounded-full"
-                        style={{
-                          width: `${pct}%`,
-                          background: `linear-gradient(90deg, ${r.color} 0%, ${r.color}CC 100%)`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="rounded-2xl border bg-muted/10 p-4">
-              <div className="flex items-center justify-between">
-                <div className="text-sm font-medium">Обзор</div>
-                <Badge variant="outline" className="tabular-nums">
-                  {fmtSec(computed.totalFrames * frameSec)}
-                </Badge>
+                  );
+                })}
               </div>
 
-              <div className="mt-3 flex items-center gap-4">
-                <div className="relative">
-                  <svg
-                    width={computed.donut.size}
-                    height={computed.donut.size}
-                    viewBox={`0 0 ${computed.donut.size} ${computed.donut.size}`}
-                  >
-                    <circle
-                      cx={computed.donut.size / 2}
-                      cy={computed.donut.size / 2}
-                      r={computed.donut.r}
-                      fill="none"
-                      stroke="rgba(2,6,23,0.08)"
-                      strokeWidth={computed.donut.stroke}
-                    />
+              {/* Правая карточка с интерактивной кольцевой диаграммой */}
+              <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-4 flex flex-col justify-between">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Сводная диаграмма
+                  </span>
+                  <Badge variant="outline" className="bg-white text-[11px] tabular-nums">
+                    Всего: {fmtSec(computed.totalFrames * frameSec)}
+                  </Badge>
+                </div>
 
-                    {computed.arcs.map((a) => (
+                <div className="my-3 flex items-center justify-center">
+                  <div className="relative" style={{ width: computed.donut.size, height: computed.donut.size }}>
+                    <svg
+                      width={computed.donut.size}
+                      height={computed.donut.size}
+                      viewBox={`0 0 ${computed.donut.size} ${computed.donut.size}`}
+                    >
                       <circle
-                        key={a.label}
                         cx={computed.donut.size / 2}
                         cy={computed.donut.size / 2}
                         r={computed.donut.r}
                         fill="none"
-                        stroke={a.color}
+                        stroke="#e2e8f0"
                         strokeWidth={computed.donut.stroke}
-                        strokeLinecap="round"
-                        strokeDasharray={`${a.dash} ${a.gap}`}
-                        strokeDashoffset={a.offset}
-                        transform={`rotate(-90 ${computed.donut.size / 2} ${computed.donut.size / 2})`}
                       />
-                    ))}
-                  </svg>
 
-                  <div className="absolute inset-0 flex flex-col items-center justify-center">
-                    <div className="text-xs text-muted-foreground">топ</div>
-                    <div className="text-lg font-semibold leading-none">{computed.top1?.label ?? "—"}</div>
-                    <div className="mt-1 text-[11px] text-muted-foreground tabular-nums">
-                      {computed.top1 ? `${((computed.top1.frames / computed.base) * 100).toFixed(1)}%` : "—"}
+                      {computed.arcs.map((a) => {
+                        const isArcHovered = hoveredKey === a.key;
+                        const isDimmed = hoveredKey !== null && !isArcHovered;
+
+                        return (
+                          <circle
+                            key={a.key}
+                            cx={computed.donut.size / 2}
+                            cy={computed.donut.size / 2}
+                            r={computed.donut.r}
+                            fill="none"
+                            stroke={a.color}
+                            strokeWidth={isArcHovered ? computed.donut.stroke + 3 : computed.donut.stroke}
+                            strokeDasharray={`${a.dash} ${a.gap}`}
+                            strokeDashoffset={a.offset}
+                            transform={`rotate(-90 ${computed.donut.size / 2} ${computed.donut.size / 2})`}
+                            className="transition-all duration-200 cursor-pointer"
+                            style={{ opacity: isDimmed ? 0.35 : 1 }}
+                            onMouseEnter={() => setHoveredKey(a.key)}
+                            onMouseLeave={() => setHoveredKey(null)}
+                          />
+                        );
+                      })}
+                    </svg>
+
+                    {/* Центр бублика */}
+                    <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-4 text-center">
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                        {hoveredKey ? "выбрано" : "лидер"}
+                      </span>
+                      <span className="mt-0.5 text-lg font-bold tracking-tight text-foreground tabular-nums leading-none">
+                        {activeItem ? `${activeItem.pct.toFixed(0)}%` : "—"}
+                      </span>
+                      <span className="mt-1 max-w-[92px] truncate text-[11px] font-medium text-muted-foreground">
+                        {activeItem?.title ?? "—"}
+                      </span>
                     </div>
                   </div>
                 </div>
 
-                <div className="min-w-0">
-                  <div className="text-xs text-muted-foreground">Доминирует</div>
-                  <div className="mt-1 flex items-center gap-2">
-                    <span
-                      className="h-2.5 w-2.5 rounded-full"
-                      style={{ background: computed.top1?.color ?? "#94A3B8" }}
-                    />
-                    <div className="font-medium truncate">{computed.top1?.label ?? "—"}</div>
+                {/* Нижняя плашка лидера */}
+                <div className="rounded-lg border border-slate-200/80 bg-white px-3 py-2 flex items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Sparkles className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                    <span className="text-muted-foreground truncate">Доминирует:</span>
                   </div>
-
-                  <div className="mt-2 text-xs text-muted-foreground">
-                    {computed.rowsAll.length} классов • {segCount} сегментов
+                  <div className="flex items-center gap-1.5 font-semibold truncate">
+                    <span
+                      className="h-2 w-2 rounded-full shrink-0"
+                      style={{ backgroundColor: computed.top1?.color ?? "#94A3B8" }}
+                    />
+                    <span className="truncate">{computed.top1?.title ?? "—"}</span>
                   </div>
                 </div>
-              </div>
-
-              <div className="mt-4 flex flex-wrap gap-2">
-                {computed.rows.slice(0, 5).map((r) => (
-                  <span
-                    key={r.label}
-                    className="inline-flex items-center gap-2 rounded-full border bg-background/60 px-2.5 py-1 text-[11px] backdrop-blur"
-                  >
-                    <span className="h-2 w-2 rounded-full" style={{ background: r.color }} />
-                    <span className="max-w-[120px] truncate">{r.label}</span>
-                  </span>
-                ))}
               </div>
             </div>
           </div>

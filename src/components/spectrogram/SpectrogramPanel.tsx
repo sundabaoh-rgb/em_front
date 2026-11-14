@@ -89,7 +89,6 @@ type SegAny = {
 
 type Mode = "truth" | "emotion";
 
-
 export type SpectrogramPanelProps = {
   variant?: "full" | "preview";
 
@@ -277,7 +276,6 @@ function clampViewStart(start: number, len: number, total: number) {
   return clamp(start, 0, maxStart);
 }
 
-
 type SpectroCache = {
   canvas: HTMLCanvasElement;
   cacheW: number;
@@ -341,6 +339,62 @@ export default function SpectrogramPanel(props: SpectrogramPanelProps) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
   const [wrapW, setWrapW] = useState(0);
+
+  // Состояние воспроизведения для плавного 60fps движения бегунка
+  const audioPlayRef = useRef({
+    progress01: 0,
+    isPlaying: false,
+    curTime: 0,
+    totalTime: 0,
+    syncStamp: 0,
+  });
+  const playLoopRef = useRef<number>(0);
+  const redrawRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    const startPlayLoop = () => {
+      cancelAnimationFrame(playLoopRef.current);
+      const loop = () => {
+        redrawRef.current?.();
+        if (audioPlayRef.current.isPlaying) {
+          playLoopRef.current = requestAnimationFrame(loop);
+        }
+      };
+      playLoopRef.current = requestAnimationFrame(loop);
+    };
+
+    const onAudioState = (e: Event) => {
+      const custom = e as CustomEvent<{
+        progress01?: number;
+        isPlaying?: boolean;
+        curTime?: number;
+        totalTime?: number;
+      }>;
+      const d = custom.detail;
+      if (!d) return;
+
+      audioPlayRef.current = {
+        progress01: typeof d.progress01 === "number" ? d.progress01 : 0,
+        isPlaying: !!d.isPlaying,
+        curTime: typeof d.curTime === "number" ? d.curTime : 0,
+        totalTime: typeof d.totalTime === "number" ? d.totalTime : 0,
+        syncStamp: performance.now(),
+      };
+
+      if (d.isPlaying) {
+        startPlayLoop();
+      } else {
+        cancelAnimationFrame(playLoopRef.current);
+        redrawRef.current?.();
+      }
+    };
+
+    window.addEventListener("em-audio-state", onAudioState);
+    return () => {
+      cancelAnimationFrame(playLoopRef.current);
+      window.removeEventListener("em-audio-state", onAudioState);
+    };
+  }, []);
 
   const [mode, setMode] = useState<Mode>(defaultMode);
   useEffect(() => {
@@ -879,7 +933,34 @@ export default function SpectrogramPanel(props: SpectrogramPanelProps) {
 
         ctx.restore();
       }
+
+      // Сквозная линия текущей позиции воспроизведения (Playhead)
+      const st = audioPlayRef.current;
+      let playProg = st.progress01;
+      if (st.isPlaying && st.totalTime > 0 && st.syncStamp > 0) {
+        const cur = st.curTime + (performance.now() - st.syncStamp) / 1000;
+        playProg = clamp(cur / st.totalTime, 0, 1);
+      }
+
+      if ((playProg > 0.0005 || st.isPlaying) && source.frames > 0) {
+        const playFrame = playProg * source.frames;
+        if (playFrame >= viewStart && playFrame <= viewEnd) {
+          const px = ((playFrame - viewStart) / viewLen) * w;
+          ctx.save();
+          ctx.strokeStyle = "rgba(56, 189, 248, 0.95)";
+          ctx.lineWidth = 1.8;
+          ctx.shadowColor = "rgba(14, 165, 233, 0.85)";
+          ctx.shadowBlur = 6;
+          ctx.beginPath();
+          ctx.moveTo(px, specTop);
+          ctx.lineTo(px, h);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
     };
+
+    redrawRef.current = draw;
 
     const resizeRaf = () => {
       cancelAnimationFrame(raf);
@@ -902,7 +983,7 @@ export default function SpectrogramPanel(props: SpectrogramPanelProps) {
       window.removeEventListener("resize", onWinResize);
       if (vv) vv.removeEventListener("resize", onWinResize);
     };
-  }, [cache, source.kind, showSegmentsBar, showTimeRuler, segmentsSorted, viewStart, viewLen, viewEnd, frameSec]);
+  }, [cache, source.kind, source.frames, showSegmentsBar, showTimeRuler, segmentsSorted, viewStart, viewLen, viewEnd, frameSec]);
 
   // -------- UI helpers --------
   const viewInfo = useMemo(() => {
@@ -1044,9 +1125,21 @@ export default function SpectrogramPanel(props: SpectrogramPanelProps) {
           ref={wrapRef}
           className={[
             "relative w-full select-none overscroll-contain",
+            isPreview ? "cursor-pointer" : "",
             heightClassName,
           ].join(" ")}
           style={{ touchAction: "none" }}
+          onClick={
+            isPreview
+              ? (e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const ratio = clamp((e.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
+                  window.dispatchEvent(
+                    new CustomEvent("em-audio-seek", { detail: { ratio, autoPlay: true } })
+                  );
+                }
+              : undefined
+          }
           onMouseEnter={showSegmentsBar ? (e) => updateHoverFromClientXY(e.clientX, e.clientY) : undefined}
           onMouseMove={showSegmentsBar ? (e) => updateHoverFromClientXY(e.clientX, e.clientY) : undefined}
           onMouseLeave={showSegmentsBar ? () => scheduleHoverUpdate(null) : undefined}
