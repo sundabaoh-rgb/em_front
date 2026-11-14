@@ -306,7 +306,8 @@ function buildSpectroCache(frames: number, melBins: number, mel: Uint8Array) {
     for (let y = 0; y < cacheH; y++) {
       const b = clamp(Math.floor(((cacheH - 1 - y) / cacheH) * melBins), 0, melBins - 1);
       const v0 = mel[f * melBins + b] ?? 0;
-      const v = clamp(Math.round((v0 - 10) * 1.25), 0, 255);
+      const norm = clamp((v0 - 14) / 241, 0, 1);
+      const v = clamp(Math.round(Math.pow(norm, 1.55) * 255), 0, 255);
 
       const i = (y * cacheW + x) * 4;
       const j = v * 3;
@@ -769,7 +770,8 @@ export default function SpectrogramPanel(props: SpectrogramPanelProps) {
         const sx = clamp(Math.floor(cacheX1), 0, Math.max(0, cache.cacheW - 1));
         const sw = clamp(Math.ceil(cacheX2 - cacheX1), 1, cache.cacheW - sx);
 
-        ctx.imageSmoothingEnabled = false;
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
         ctx.drawImage(cache.canvas, sx, 0, sw, cache.cacheH, 0, specTop, w, specH);
       } else {
         ctx.fillStyle = "rgba(2,6,23,0.06)";
@@ -840,9 +842,14 @@ export default function SpectrogramPanel(props: SpectrogramPanelProps) {
       if (showTimeRuler) {
         ctx.save();
         ctx.translate(0, specTop);
-        ctx.strokeStyle = "rgba(0,0,0,0.10)";
-        ctx.fillStyle = "rgba(15,23,42,0.55)";
-        ctx.font = "11px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+
+        // Лёгкая тёмная подложка сверху, чтобы белые цифры всегда читались
+        ctx.fillStyle = "rgba(5, 5, 15, 0.45)";
+        ctx.fillRect(0, 0, w, 24);
+
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
+        ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+        ctx.font = "500 11px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
 
         const winSec = viewLen * frameSec;
         const approxTicks = clamp(Math.floor(w / 140), 3, 8);
@@ -867,7 +874,7 @@ export default function SpectrogramPanel(props: SpectrogramPanelProps) {
           ctx.moveTo(x + 0.5, 0);
           ctx.lineTo(x + 0.5, 6);
           ctx.stroke();
-          ctx.fillText(fmtSec(tSec), x + 2, 18);
+          ctx.fillText(fmtSec(tSec), x + 4, 16);
         }
 
         ctx.restore();
@@ -1032,7 +1039,7 @@ export default function SpectrogramPanel(props: SpectrogramPanelProps) {
         </div>
       ) : null}
 
-      <div className="rounded-2xl border bg-background shadow-sm overflow-hidden">
+      <div className={isPreview ? "overflow-hidden" : "rounded-2xl border bg-background shadow-xs overflow-hidden"}>
         <div
           ref={wrapRef}
           className={[

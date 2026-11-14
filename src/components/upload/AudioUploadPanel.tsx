@@ -7,8 +7,20 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import RecordingOverlay from "@/components/upload/RecordingOverlay";
-import { Separator } from "@/components/ui/separator";
-import { Mic, Upload, FileAudio2, X, Download, Play, Pause, Volume2, VolumeX, Settings2 } from "lucide-react";
+import {
+  Mic,
+  Upload,
+  FileAudio2,
+  X,
+  Download,
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  Settings2,
+  Sparkles,
+  Loader2,
+} from "lucide-react";
 
 /* ---------------- utils ---------------- */
 
@@ -55,7 +67,6 @@ function isFileDrag(e: React.DragEvent) {
   return types.includes("Files");
 }
 
-
 async function computeDurationSec(file: File, signal?: AbortSignal): Promise<number | null> {
   try {
     const url = URL.createObjectURL(file);
@@ -84,8 +95,7 @@ async function computeDurationSec(file: File, signal?: AbortSignal): Promise<num
 
     if (signal?.aborted) return null;
     if (meta !== null) return meta;
-  } catch {
-  }
+  } catch {}
 
   try {
     const ab = await file.arrayBuffer();
@@ -253,7 +263,6 @@ export default function AudioUploadPanel() {
   const [windowMsInput, setWindowMsInput] = useState(String(windowMs));
   useEffect(() => setWindowMsInput(String(windowMs)), [windowMs]);
 
-
   const isBusy = !!taskId && (status === "queued" || status === "processing");
 
   const [dragActive, setDragActive] = useState(false);
@@ -299,14 +308,13 @@ export default function AudioUploadPanel() {
             sessionStorage.setItem(`aud_dur:${fileKey(restoredFile)}`, String(saved.durationSec));
           } catch {}
         }
-      } catch {
-      }
+      } catch {}
     })();
 
     return () => {
       alive = false;
     };
-  }, []);
+  }, [file, setAudioFile]);
 
   /* -------- create objectURL -------- */
   useEffect(() => {
@@ -338,8 +346,7 @@ export default function AudioUploadPanel() {
         durationSec,
       };
       await idbPut(AUDIO_KEY, payload);
-    } catch {
-    }
+    } catch {}
   }, []);
 
   const updatePersistedDuration = useCallback(async (f: File, durationSec: number) => {
@@ -357,8 +364,7 @@ export default function AudioUploadPanel() {
 
       saved.durationSec = durationSec;
       await idbPut(AUDIO_KEY, saved);
-    } catch {
-    }
+    } catch {}
   }, []);
 
   /* -------- restore duration on remount -------- */
@@ -452,7 +458,7 @@ export default function AudioUploadPanel() {
   const remainingText = useMemo(() => {
     if (!(totalTime > 0)) return "";
     const left = Math.max(0, totalTime - curTime);
-    return `${formatDuration(left)} осталось`;
+    return `-${formatDuration(left)}`;
   }, [totalTime, curTime]);
 
   const onPick = useCallback(
@@ -618,7 +624,6 @@ export default function AudioUploadPanel() {
     []
   );
 
-  // drag handlers
   const onDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     if (!isFileDrag(e)) return;
     e.preventDefault();
@@ -659,37 +664,35 @@ export default function AudioUploadPanel() {
         }}
       />
 
-      <Card className="rounded-3xl border bg-background shadow-sm overflow-hidden">
-        <CardHeader className="border-b">
-          <div className="flex items-start justify-between gap-3">
+      <Card className="overflow-hidden">
+        <CardHeader className="border-b bg-slate-50/50 py-3.5 px-5">
+          <div className="flex items-center justify-between gap-3">
             <div>
-              <CardTitle className="text-base">Аудио</CardTitle>
-              <div className="mt-1 text-sm text-muted-foreground">Загрузка/запись → настрой параметры → отправь на обработку.</div>
+              <CardTitle className="text-base">Источник и параметры</CardTitle>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Выберите аудиофайл или запишите голос с микрофона
+              </p>
             </div>
 
-            <Badge variant={isBusy ? "secondary" : statusTone(String(status || "ready"))} className="shrink-0">
-              {isBusy ? "обработка…" : String(status || "ready")}
+            <Badge variant={isBusy ? "default" : statusTone(String(status || "ready"))} className="shrink-0">
+              {isBusy ? "анализ…" : String(status || "ready")}
             </Badge>
           </div>
         </CardHeader>
 
-        <CardContent className="p-4 md:p-5 space-y-4">
-          {/* Settings */}
-          <div className="rounded-2xl border bg-background p-3 shadow-sm">
-            <div className="flex items-center gap-2">
-              <div className="inline-flex h-9 w-9 items-center justify-center rounded-2xl border bg-muted/30">
-                <Settings2 className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <div className="min-w-0">
-                <div className="text-sm font-medium">Параметры обработки</div>
-              </div>
+        <CardContent className="p-5 space-y-5">
+          {/* Компактный блок настроек без лишних рамок */}
+          <div className="rounded-xl bg-slate-100/70 p-3.5 border border-slate-200/60 space-y-3">
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              <Settings2 className="h-3.5 w-3.5" />
+              <span>Параметры модели</span>
             </div>
 
-            <div className="mt-3 grid gap-3 sm:grid-cols-2 sm:items-end">
-              <label className="grid gap-1">
-                <span className="text-xs text-muted-foreground">Модель</span>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="grid gap-1.5">
+                <span className="text-xs font-medium text-foreground/80">Архитектура</span>
                 <select
-                  className="h-10 w-full rounded-xl border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/40"
+                  className="h-9 w-full cursor-pointer rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium shadow-2xs outline-none transition focus:border-primary focus:ring-2 focus:ring-ring/20"
                   value={modelId}
                   onChange={(e) => setModelId(e.target.value)}
                   disabled={isBusy}
@@ -702,11 +705,10 @@ export default function AudioUploadPanel() {
                 </select>
               </label>
 
-              <label className="grid gap-1">
-                <span className="text-xs text-muted-foreground">Окно анализа (ms)</span>
-
+              <label className="grid gap-1.5">
+                <span className="text-xs font-medium text-foreground/80">Окно анализа (мс)</span>
                 <input
-                  className="h-10 w-full rounded-xl border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/40"
+                  className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium tabular-nums shadow-2xs outline-none transition focus:border-primary focus:ring-2 focus:ring-ring/20"
                   value={windowMsInput}
                   onChange={(e) => {
                     const raw = e.target.value.replace(/[^\d]/g, "");
@@ -725,240 +727,258 @@ export default function AudioUploadPanel() {
                   }}
                   inputMode="numeric"
                   disabled={isBusy}
-                  placeholder="20–40"
+                  placeholder="3000"
                 />
               </label>
-
             </div>
           </div>
 
-          {/* Dropzone */}
+          {/* Зона загрузки файла */}
           <div
             className={[
-              "rounded-2xl border border-dashed transition overflow-hidden",
-              dragActive ? "border-foreground/50 bg-muted/40" : "border-muted-foreground/25 bg-muted/20",
+              "rounded-xl border-2 border-dashed p-4 transition-all",
+              dragActive
+                ? "border-primary bg-primary/5"
+                : "border-slate-200 hover:border-slate-300 bg-slate-50/40",
             ].join(" ")}
             onDragEnter={onDragEnter}
             onDragOver={onDragOver}
             onDragLeave={onDragLeave}
             onDrop={onDrop}
           >
-            <div className="p-4 md:p-5">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-start gap-3 min-w-0">
-                  <div className="mt-0.5 rounded-2xl border bg-background p-2 shrink-0">
-                    {file ? <FileAudio2 className="h-5 w-5" /> : <Upload className="h-5 w-5" />}
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white border border-slate-200/80 shadow-2xs text-foreground">
+                  {file ? <FileAudio2 className="h-5 w-5 text-primary" /> : <Upload className="h-5 w-5 text-muted-foreground" />}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium truncate">
+                    {file ? "Аудиофайл готов" : "Перетащите аудио сюда"}
                   </div>
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium">{file ? "Файл выбран" : "Перетащи аудио сюда"}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {file ? "Можно заменить файл или записать новый." : "или выбери файл кнопкой ниже / запиши микрофон."}
-                    </div>
+                  <div className="text-xs text-muted-foreground truncate">
+                    {file ? "Можно заменить файл или записать заново" : "WAV, MP3, WebM, OGG"}
                   </div>
                 </div>
-
-                <Badge variant="outline" className="hidden sm:inline shrink-0">
-                  drag & drop
-                </Badge>
               </div>
+            </div>
 
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                <Button variant="secondary" onClick={() => inputRef.current?.click()} className="gap-2">
-                  <Upload className="h-4 w-4" />
-                  Выбрать файл
-                </Button>
+            <div className="mt-3.5 grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => inputRef.current?.click()}
+                className="w-full bg-white"
+              >
+                <Upload className="h-3.5 w-3.5" />
+                Выбрать файл
+              </Button>
 
-                <input
-                  ref={inputRef}
-                  type="file"
-                  accept="audio/*"
-                  className="hidden"
-                  onChange={(e) => onPick(e.target.files?.[0] ?? null)}
-                />
+              <input
+                ref={inputRef}
+                type="file"
+                accept="audio/*"
+                className="hidden"
+                onChange={(e) => onPick(e.target.files?.[0] ?? null)}
+              />
 
-                <Button variant="outline" onClick={() => setRecOpen(true)} className="gap-2">
-                  <Mic className="h-4 w-4" />
-                  Запись
-                </Button>
-              </div>
-
-              <div className="mt-4">
-                {dragActive && !file ? (
-                  <div className="rounded-2xl border bg-background/60 p-3 text-sm">
-                    <span className="font-medium">Отпусти файл</span>{" "}
-                    <span className="text-muted-foreground">— выберем его для отправки.</span>
-                  </div>
-                ) : file ? (
-                  <div className="space-y-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="secondary" className="max-w-full truncate">
-                        {file.name}
-                      </Badge>
-                      <Badge variant="outline">{formatBytes(file.size)}</Badge>
-                      <Badge variant="outline">{file.type || "audio"}</Badge>
-
-                      <Badge variant="outline">
-                        ⏱{" "}
-                        {duration === null ? (
-                          <span className="cursor-pointer" onClick={onStartComputeIfNeeded} title="Нажми, чтобы пересчитать">
-                            считаем…
-                          </span>
-                        ) : duration === -1 ? (
-                          "неизвестно"
-                        ) : (
-                          formatDuration(duration)
-                        )}
-                      </Badge>
-
-                      <div className="ml-auto flex items-center gap-1">
-                        <Button size="icon" variant="ghost" className="text-muted-foreground" onClick={clearAll} title="Убрать">
-                          <X className="h-4 w-4" />
-                        </Button>
-
-                        <Button size="icon" variant="ghost" className="text-muted-foreground" onClick={downloadAudio} title="Скачать">
-                          <Download className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-
-                    {audioUrl ? (
-                      <div
-                        className={["rounded-2xl border bg-background shadow-sm", "px-4 py-3", "focus:outline-none focus:ring-2 focus:ring-ring/50"].join(" ")}
-                        tabIndex={0}
-                        onKeyDown={onPlayerKeyDown}
-                      >
-                        <audio
-                          ref={audioRef}
-                          className="hidden"
-                          src={audioUrl}
-                          preload="metadata"
-                          onLoadedMetadata={(e) => {
-                            const d = e.currentTarget.duration;
-                            if (isValidDuration(d)) {
-                              setDuration(d);
-                              void updatePersistedDuration(file, d);
-                            }
-                          }}
-                          onDurationChange={(e) => {
-                            const d = e.currentTarget.duration;
-                            if (isValidDuration(d)) {
-                              setDuration(d);
-                              void updatePersistedDuration(file, d);
-                            }
-                          }}
-                        />
-
-                        <div className="flex items-center gap-3">
-                          <Button
-                            type="button"
-                            size="icon"
-                            variant="secondary"
-                            onClick={togglePlay}
-                            className="h-10 w-10 rounded-full shrink-0"
-                            title={isPlaying ? "Пауза (Space)" : "Пуск (Space)"}
-                          >
-                            {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
-                          </Button>
-
-                          <div className="shrink-0 text-sm tabular-nums">
-                            <span className="font-medium">{formatDuration(curTime)}</span>
-                            <span className="text-muted-foreground">
-                              {" "}
-                              / {duration === null ? "…" : duration === -1 ? "—" : formatDuration(duration)}
-                            </span>
-                          </div>
-
-                          <div className="ml-auto flex items-center gap-2">
-                            <Button
-                              type="button"
-                              size="icon"
-                              variant="ghost"
-                              className="text-muted-foreground"
-                              onClick={() => setMuted((m) => !m)}
-                              title={muted ? "Включить звук" : "Выключить звук"}
-                            >
-                              {muted || volume <= 0.001 ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
-                            </Button>
-
-                            <div className="hidden sm:flex items-center">
-                              <div
-                                ref={volBarRef}
-                                className="relative h-2 w-28 rounded-full bg-muted/60 cursor-pointer"
-                                {...volDrag}
-                                role="slider"
-                                aria-label="Volume"
-                                aria-valuemin={0}
-                                aria-valuemax={1}
-                                aria-valuenow={muted ? 0 : volume}
-                              >
-                                <div className="absolute left-0 top-0 h-2 rounded-full bg-foreground/60" style={{ width: `${(muted ? 0 : volume) * 100}%` }} />
-                                <div
-                                  className="absolute top-1/2 h-4 w-4 -translate-y-1/2 rounded-full bg-background shadow ring-1 ring-border"
-                                  style={{ left: `calc(${(muted ? 0 : volume) * 100}% - 8px)` }}
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="mt-3">
-                          <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                            <span className="truncate">{isPlaying ? "воспроизведение" : "пауза"}</span>
-                            <span className="tabular-nums">{remainingText}</span>
-                          </div>
-
-                          <div
-                            ref={seekBarRef}
-                            className="mt-2 relative h-3 rounded-full bg-muted/60 cursor-pointer"
-                            {...seekDrag}
-                            role="slider"
-                            aria-label="Seek"
-                            aria-valuemin={0}
-                            aria-valuemax={totalTime || 0}
-                            aria-valuenow={curTime}
-                          >
-                            <div className="absolute left-0 top-0 h-3 rounded-full bg-primary" style={{ width: `${progress01 * 100}%` }} />
-                            <div
-                              className="absolute top-1/2 h-5 w-5 -translate-y-1/2 rounded-full bg-background shadow-md ring-1 ring-border"
-                              style={{ left: `calc(${progress01 * 100}% - 10px)` }}
-                            />
-                          </div>
-
-                          <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground tabular-nums">
-                            <span>← 5s / → 5s</span>
-                            <span>{formatDuration(totalTime)}</span>
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="text-sm text-muted-foreground">Готовим плеер…</div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="text-sm text-muted-foreground">Поддерживаются любые аудио форматы браузера. После выбора появится плеер.</div>
-                )}
-              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setRecOpen(true)}
+                className="w-full bg-white"
+              >
+                <Mic className="h-3.5 w-3.5 text-red-500" />
+                Записать
+              </Button>
             </div>
           </div>
 
-          <Separator />
+          {/* Карточка выбранного файла и плеер */}
+          {file ? (
+            <div className="rounded-xl border border-slate-200/90 bg-white p-3.5 shadow-2xs space-y-3">
+              {/* Шапка файла: имя и аккуратная строка метаданных */}
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-foreground truncate" title={file.name}>
+                    {file.name}
+                  </div>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground tabular-nums">
+                    <span>{formatBytes(file.size)}</span>
+                    <span>•</span>
+                    <span>{file.type || "audio"}</span>
+                    <span>•</span>
+                    <span
+                      className="cursor-pointer hover:text-foreground"
+                      onClick={onStartComputeIfNeeded}
+                      title="Длительность"
+                    >
+                      {duration === null
+                        ? "считаем…"
+                        : duration === -1
+                        ? "—"
+                        : formatDuration(duration)}
+                    </span>
+                  </div>
+                </div>
 
+                <div className="flex items-center gap-1 shrink-0">
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    className="text-muted-foreground hover:text-foreground"
+                    onClick={downloadAudio}
+                    title="Скачать исходник"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    className="text-muted-foreground hover:text-destructive"
+                    onClick={clearAll}
+                    title="Удалить файл"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+
+              {/* Аудиоплеер с контрастными ползунками */}
+              {audioUrl ? (
+                <div
+                  className="rounded-lg bg-slate-50 p-3 border border-slate-200/60 focus:outline-none focus:ring-2 focus:ring-ring/40"
+                  tabIndex={0}
+                  onKeyDown={onPlayerKeyDown}
+                >
+                  <audio
+                    ref={audioRef}
+                    className="hidden"
+                    src={audioUrl}
+                    preload="metadata"
+                    onLoadedMetadata={(e) => {
+                      const d = e.currentTarget.duration;
+                      if (isValidDuration(d)) {
+                        setDuration(d);
+                        void updatePersistedDuration(file, d);
+                      }
+                    }}
+                    onDurationChange={(e) => {
+                      const d = e.currentTarget.duration;
+                      if (isValidDuration(d)) {
+                        setDuration(d);
+                        void updatePersistedDuration(file, d);
+                      }
+                    }}
+                  />
+
+                  <div className="flex items-center gap-3">
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant="default"
+                      onClick={togglePlay}
+                      className="h-8 w-8 rounded-full shrink-0 shadow-xs"
+                      title={isPlaying ? "Пауза (Space)" : "Воспроизвести (Space)"}
+                    >
+                      {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 ml-0.5" />}
+                    </Button>
+
+                    {/* Полоса перемотки */}
+                    <div className="flex-1 min-w-0">
+                      <div
+                        ref={seekBarRef}
+                        className="relative h-2 w-full rounded-full bg-slate-200 cursor-pointer"
+                        {...seekDrag}
+                        role="slider"
+                        aria-label="Seek"
+                        aria-valuemin={0}
+                        aria-valuemax={totalTime || 0}
+                        aria-valuenow={curTime}
+                      >
+                        <div
+                          className="absolute left-0 top-0 h-2 rounded-full bg-primary"
+                          style={{ width: `${progress01 * 100}%` }}
+                        />
+                        <div
+                          className="absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full bg-white border-2 border-primary shadow-xs"
+                          style={{ left: `calc(${progress01 * 100}% - 7px)` }}
+                        />
+                      </div>
+
+                      <div className="mt-1.5 flex items-center justify-between text-[11px] text-muted-foreground tabular-nums">
+                        <span className="font-medium text-foreground">{formatDuration(curTime)}</span>
+                        <span>{remainingText || formatDuration(totalTime)}</span>
+                      </div>
+                    </div>
+
+                    {/* Громкость */}
+                    <div className="flex items-center gap-1.5 pl-1">
+                      <Button
+                        type="button"
+                        size="icon-xs"
+                        variant="ghost"
+                        className="text-muted-foreground"
+                        onClick={() => setMuted((m) => !m)}
+                        title={muted ? "Включить звук" : "Выключить звук"}
+                      >
+                        {muted || volume <= 0.001 ? (
+                          <VolumeX className="h-4 w-4" />
+                        ) : (
+                          <Volume2 className="h-4 w-4" />
+                        )}
+                      </Button>
+
+                      <div
+                        ref={volBarRef}
+                        className="hidden sm:block relative h-1.5 w-16 rounded-full bg-slate-200 cursor-pointer"
+                        {...volDrag}
+                        role="slider"
+                        aria-label="Volume"
+                        aria-valuemin={0}
+                        aria-valuemax={1}
+                        aria-valuenow={muted ? 0 : volume}
+                      >
+                        <div
+                          className="absolute left-0 top-0 h-1.5 rounded-full bg-slate-600"
+                          style={{ width: `${(muted ? 0 : volume) * 100}%` }}
+                        />
+                        <div
+                          className="absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full bg-white border border-slate-400 shadow-2xs"
+                          style={{ left: `calc(${(muted ? 0 : volume) * 100}% - 6px)` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {/* Кнопка отправки */}
           {!isBusy ? (
-            <Button className="w-full" onClick={onStart} disabled={!file}>
+            <Button className="w-full h-10 gap-2 shadow-xs" onClick={onStart} disabled={!file}>
+              <Sparkles className="h-4 w-4" />
               Отправить на обработку
             </Button>
           ) : (
-            <div className="grid gap-2">
-              <Button className="w-full" disabled>
-                Обработка…
+            <div className="grid grid-cols-[1fr_auto] gap-2">
+              <Button className="w-full h-10 gap-2" disabled>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Выполняется анализ…
               </Button>
-              <Button className="w-full" variant="secondary" onClick={cancel}>
+              <Button variant="outline" className="h-10" onClick={cancel}>
                 Отменить
               </Button>
             </div>
           )}
 
-          {error ? <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
+          {error ? (
+            <div className="rounded-xl border border-red-200 bg-red-50/80 px-3.5 py-2.5 text-xs font-medium text-red-700">
+              {error}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </>

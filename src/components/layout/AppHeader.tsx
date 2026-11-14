@@ -3,128 +3,109 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTaskStore } from "@/store/taskStore";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import AccountMenu from "@/components/layout/AccountMenu";
+import { AudioWaveform, BarChart3, Home } from "lucide-react";
 
-/**
- * Возвращает вариант кнопки навигации в зависимости от активного роутинга.
- *
- * Принцип:
- * - active → более заметная (default)
- * - inactive → вторичная (secondary)
- */
-function navBtnVariant(active: boolean) {
-  return active ? "default" : "secondary";
-}
-
-/**
- * AppHeader
- *
- * Универсальный хедер приложения:
- * - отображает заголовок и подзаголовок текущей страницы
- * - показывает статус/прогресс текущей задачи (task store)
- * - содержит навигацию (desktop + mobile) и меню аккаунта
- *
- * Источники данных:
- * - Next.js router (`usePathname`) для подсветки активного пункта меню
- * - Zustand (`useTaskStore`) для taskId, статуса, прогресса и ошибок
- */
 export default function AppHeader({
   title,
   subtitle,
 }: {
-  /** Заголовок текущей страницы (H1) */
   title: string;
-  /** Опциональный подзаголовок страницы */
   subtitle?: string;
 }) {
-  /**
-   * Текущий путь — используется для определения активной вкладки навигации.
-   */
   const pathname = usePathname();
 
-  /**
-   * Данные текущей задачи из стора.
-   */
   const status = useTaskStore((s) => s.status);
   const taskId = useTaskStore((s) => s.taskId);
   const progress = useTaskStore((s) => s.progress);
   const error = useTaskStore((s) => s.error);
 
-  /**
-   * Человекочитаемая подпись статуса для UI.
-   * Важно: статус хранится как machine-friendly значение,
-   * а на UI выводим локализованную метку.
-   */
-  const statusLabel =
+  const statusMeta =
     status === "done"
-      ? "готово"
+      ? { label: "Готово", dot: "bg-emerald-500", bg: "bg-emerald-500/10 text-emerald-700 border-emerald-500/20" }
       : status === "processing"
-      ? "обработка"
+      ? { label: "В обработке", dot: "bg-amber-500 animate-pulse", bg: "bg-amber-500/10 text-amber-700 border-amber-500/20" }
       : status === "queued"
-      ? "в очереди"
+      ? { label: "В очереди", dot: "bg-blue-500 animate-pulse", bg: "bg-blue-500/10 text-blue-700 border-blue-500/20" }
       : status === "error"
-      ? "ошибка"
-      : "idle";
+      ? { label: "Ошибка", dot: "bg-red-500", bg: "bg-red-500/10 text-red-700 border-red-500/20" }
+      : { label: "Ожидание", dot: "bg-slate-400", bg: "bg-slate-100 text-slate-600 border-slate-200" };
 
-  /**
-   * Вариант Badge для статуса: ошибки подсвечиваем как destructive,
-   * остальные статусы — нейтральным secondary.
-   */
-  const badgeVariant = status === "error" ? "destructive" : "secondary";
-
-  /**
-   * Флаги активного роутинга для подсветки кнопок.
-   */
   const isHome = pathname === "/";
   const isTimeline = pathname.startsWith("/timeline");
 
+  const shortTaskId = taskId ? `#${taskId.slice(0, 6)}` : null;
+
   return (
-    <header className="flex items-start justify-between gap-3">
+    <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-200/80 pb-5">
       <div className="min-w-0 space-y-1">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-xl md:text-2xl font-semibold tracking-tight">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-2xs">
+            <AudioWaveform className="h-4 w-4" />
+          </div>
+
+          <h1 className="text-xl md:text-2xl font-bold tracking-tight text-foreground">
             {title}
           </h1>
-          <Badge variant={badgeVariant}>{statusLabel}</Badge>
+
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${statusMeta.bg}`}
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${statusMeta.dot}`} />
+            {statusMeta.label}
+            {typeof progress === "number" && (status === "processing" || status === "queued") ? (
+              <span className="tabular-nums opacity-80">({(progress * 100).toFixed(0)}%)</span>
+            ) : null}
+          </span>
+
+          {shortTaskId ? (
+            <span
+              title={`Task ID: ${taskId}`}
+              className="hidden md:inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 font-mono text-[11px] text-muted-foreground border border-slate-200/60"
+            >
+              {shortTaskId}
+            </span>
+          ) : null}
         </div>
 
         {subtitle ? (
-          <p className="text-sm text-muted-foreground">{subtitle}</p>
+          <p className="text-xs md:text-sm text-muted-foreground">{subtitle}</p>
         ) : null}
 
-        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span>task:</span>
-          <code className="rounded bg-muted px-2 py-0.5">{taskId ?? "—"}</code>
-
-          {typeof progress === "number" ? (
-            <span>progress: {(progress * 100).toFixed(0)}%</span>
-          ) : null}
-
-          {error ? <span className="text-red-600">{error}</span> : null}
-        </div>
+        {error ? (
+          <p className="text-xs font-medium text-red-600">{error}</p>
+        ) : null}
       </div>
 
-      <div className="shrink-0 flex items-center gap-2">
-        <div className="hidden sm:flex items-center gap-2">
-          <Button asChild variant={navBtnVariant(isHome)}>
-            <Link href="/">Главная</Link>
-          </Button>
+      <div className="shrink-0 flex items-center gap-2.5">
+        {/* Единый блок навигации (segmented control) */}
+        <nav className="inline-flex items-center rounded-xl bg-slate-200/70 p-1 border border-slate-200/60">
+          <Link
+            href="/"
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+              isHome
+                ? "bg-white text-foreground shadow-2xs"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Home className="h-3.5 w-3.5" />
+            <span>Главная</span>
+          </Link>
 
-          <Button asChild variant={navBtnVariant(isTimeline)}>
-            <Link href="/timeline">Во временном ряде</Link>
-          </Button>
-        </div>
+          <Link
+            href="/timeline"
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+              isTimeline
+                ? "bg-white text-foreground shadow-2xs"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <BarChart3 className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Во временном ряде</span>
+            <span className="sm:hidden">Ряд</span>
+          </Link>
+        </nav>
 
-        <div className="sm:hidden flex items-center gap-2">
-          <Button asChild size="sm" variant={navBtnVariant(isHome)}>
-            <Link href="/">Главная</Link>
-          </Button>
-          <Button asChild size="sm" variant={navBtnVariant(isTimeline)}>
-            <Link href="/timeline">Ряд</Link>
-          </Button>
-        </div>
         <AccountMenu />
       </div>
     </header>

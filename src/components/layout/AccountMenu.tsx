@@ -9,44 +9,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { useUserStore } from "@/store/userStore";
+import { ChevronDown } from "lucide-react";
 
-/**
- * AccountMenu
- *
- * Выпадающее меню аккаунта в шапке приложения.
- *
- * Отображает:
- * - аватар с инициалами пользователя
- * - текущую роль (guest / user / admin)
- *
- * Функциональность:
- * - временное переключение ролей (dev / demo режим)
- * - заготовки под настройки и выход
- *
- * Источник данных:
- * - Zustand store (`useUserStore`)
- *
- * Примечание:
- * - переключение ролей используется только для разработки и демо
- * - в продакшене пункты меню будут заменены на реальные auth-действия
- */
 export default function AccountMenu() {
-  /**
-   * Текущее состояние пользователя и экшен смены роли.
-   */
   const { user, setRole } = useUserStore();
 
-  /**
-   * Инициалы для аватара.
-   *
-   * Логика:
-   * - если есть имя → берём первые 2 символа
-   * - если имени нет:
-   *   - guest → "G"
-   *   - остальные роли → "U"
-   */
   const initials =
     user.name?.slice(0, 2).toUpperCase() ??
     (user.role === "guest" ? "G" : "U");
@@ -54,20 +22,23 @@ export default function AccountMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger className="outline-none">
-        <div className="flex items-center gap-2 rounded-full border px-2 py-1 hover:bg-muted cursor-pointer">
-          <Avatar className="h-7 w-7">
-            <AvatarFallback>{initials}</AvatarFallback>
+        <div className="flex h-9 items-center gap-2 rounded-xl border border-slate-200/80 bg-white pl-1.5 pr-2.5 shadow-2xs transition hover:bg-slate-50 cursor-pointer">
+          <Avatar className="h-6 w-6">
+            <AvatarFallback className="text-[11px] font-semibold bg-slate-100 text-slate-700">
+              {initials}
+            </AvatarFallback>
           </Avatar>
 
-          <Badge variant="outline" className="text-xs">
+          <span className="text-xs font-medium text-foreground capitalize">
             {user.role}
-          </Badge>
+          </span>
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
         </div>
       </DropdownMenuTrigger>
 
-      <DropdownMenuContent align="end" className="w-48">
-        <DropdownMenuLabel>
-          {user.role === "guest" ? "Гость" : user.name}
+      <DropdownMenuContent align="end" className="w-48 rounded-xl">
+        <DropdownMenuLabel className="text-xs text-muted-foreground">
+          Режим: {user.role === "guest" ? "Гость" : user.name}
         </DropdownMenuLabel>
 
         <DropdownMenuSeparator />
@@ -84,12 +55,8 @@ export default function AccountMenu() {
 
         <DropdownMenuSeparator />
 
-        <DropdownMenuItem disabled>
-          Настройки (позже)
-        </DropdownMenuItem>
-        <DropdownMenuItem disabled>
-          Выход
-        </DropdownMenuItem>
+        <DropdownMenuItem disabled>Настройки (позже)</DropdownMenuItem>
+        <DropdownMenuItem disabled>Выход</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

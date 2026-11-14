@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useTaskStore } from "@/store/taskStore";
 import { downloadCsvFile } from "@/lib/csv";
+import { Download, TableProperties } from "lucide-react";
 
 type RightPanelProps = {
   summaryOnly?: boolean;
@@ -53,7 +54,7 @@ export default function RightPanel({ summaryOnly, tableOnly, title }: RightPanel
 
   const { headerCols, rows, colSpan } = useMemo(() => {
     const cols = Array.isArray(features?.columns) ? features.columns : [];
-    const safeCols = cols.length ? cols : ["—", "—", "—"];
+    const safeCols = cols.length ? cols : ["Значение"];
 
     const safeRows = (Array.isArray(features?.rows) ? features.rows : []).map((r: FeatureRow) => {
       const vals = Array.isArray(r.values) ? r.values.map((v) => String(v ?? "—")) : [];
@@ -93,15 +94,21 @@ export default function RightPanel({ summaryOnly, tableOnly, title }: RightPanel
   const showTable = !summaryOnly;
 
   return (
-    <Card className="rounded-2xl border bg-background shadow-sm overflow-hidden">
-      <CardHeader className="border-b">
-        <CardTitle className="flex items-center justify-between gap-3">
-          <span className="flex items-center gap-2">
-            {title ?? "Анализ"}
-            {!tableOnly ? <Badge variant={statusTone(String(status ?? ""))}>{String(status ?? "—")}</Badge> : null}
+    <Card className="rounded-2xl border bg-background shadow-xs overflow-hidden">
+      <CardHeader className="border-b bg-muted/15 py-3.5 px-5">
+        <CardTitle className="flex items-center justify-between gap-3 text-base">
+          <span className="flex items-center gap-2.5">
+            <TableProperties className="h-4 w-4 text-muted-foreground" />
+            <span>{title ?? "Акустические признаки"}</span>
+            {!tableOnly && status ? (
+              <Badge variant={statusTone(String(status))} className="text-xs font-normal">
+                {String(status)}
+              </Badge>
+            ) : null}
           </span>
 
-          <Button size="sm" variant="secondary" onClick={downloadCsv} disabled={!hasData}>
+          <Button size="sm" variant="outline" onClick={downloadCsv} disabled={!hasData} className="gap-2 h-8 text-xs">
+            <Download className="h-3.5 w-3.5" />
             Скачать CSV
           </Button>
         </CardTitle>
@@ -109,30 +116,38 @@ export default function RightPanel({ summaryOnly, tableOnly, title }: RightPanel
 
       <CardContent className={showTable && !showSummary ? "p-0" : "p-5 space-y-5"}>
         {showSummary ? (
-          <div className="space-y-2">
-            <p className="text-sm text-muted-foreground">Основная эмоция</p>
-            <Badge variant="secondary" className="px-3 py-1 text-sm">
+          <div className="flex items-center justify-between rounded-xl bg-muted/40 px-4 py-3">
+            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Основная эмоция
+            </span>
+            <Badge variant="secondary" className="px-3 py-1 text-sm font-medium">
               {mainEmotion ?? "—"}
             </Badge>
           </div>
         ) : null}
 
         {showTable ? (
-          <div className={showSummary ? "space-y-2" : ""}>
-            {showSummary ? <p className="text-sm text-muted-foreground">Признаки</p> : null}
+          <div className={showSummary ? "space-y-2.5" : ""}>
+            {showSummary ? (
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  Признаки ({rows.length})
+                </p>
+              </div>
+            ) : null}
 
             <div className={showSummary ? "rounded-xl border overflow-hidden" : ""}>
               <div className="max-h-[420px] overflow-auto">
                 <table className="w-full text-sm">
-                  <thead className="sticky top-0 z-10 bg-background">
+                  <thead className="sticky top-0 z-10 bg-muted/60 backdrop-blur">
                     <tr className="border-b">
-                      <th className="text-left font-medium px-4 py-3 text-muted-foreground">
-                        Feature
+                      <th className="text-left text-xs font-semibold uppercase tracking-wider px-4 py-2.5 text-muted-foreground">
+                        Признак
                       </th>
                       {headerCols.map((c: string, i: number) => (
                         <th
                           key={`${c}-${i}`}
-                          className="text-right font-medium px-4 py-3 text-muted-foreground tabular-nums"
+                          className="text-right text-xs font-semibold uppercase tracking-wider px-4 py-2.5 text-muted-foreground tabular-nums"
                         >
                           {c}
                         </th>
@@ -140,17 +155,19 @@ export default function RightPanel({ summaryOnly, tableOnly, title }: RightPanel
                     </tr>
                   </thead>
 
-                  <tbody>
+                  <tbody className="divide-y">
                     {rows.map((r: { name: string; values: string[] }, ri: number) => (
                       <tr
                         key={`${r.name}-${ri}`}
-                        className="border-b last:border-b-0 hover:bg-muted/40"
+                        className="transition-colors hover:bg-muted/30 even:bg-muted/10"
                       >
-                        <td className="px-4 py-3 font-medium">{r.name}</td>
+                        <td className="px-4 py-2.5 font-mono text-xs font-medium text-foreground/90">
+                          {r.name}
+                        </td>
                         {r.values.map((v: string, vi: number) => (
-                          <td key={`${r.name}-${vi}`} className="px-4 py-3 text-right tabular-nums">
+                          <td key={`${r.name}-${vi}`} className="px-4 py-2.5 text-right text-xs tabular-nums">
                             {v === "—" ? (
-                              <span className="text-muted-foreground">-</span>
+                              <span className="text-muted-foreground/50">—</span>
                             ) : (
                               fmt(v)
                             )}
@@ -161,17 +178,13 @@ export default function RightPanel({ summaryOnly, tableOnly, title }: RightPanel
 
                     {!hasData ? (
                       <tr>
-                        <td colSpan={colSpan} className="text-center text-muted-foreground py-14">
-                          Нет данных
+                        <td colSpan={colSpan} className="text-center text-muted-foreground py-12 text-xs">
+                          Данные признаков появятся после завершения анализа
                         </td>
                       </tr>
                     ) : null}
                   </tbody>
                 </table>
-              </div>
-
-              <div className="px-4 py-3 text-xs text-muted-foreground border-t">
-                ...
               </div>
             </div>
           </div>

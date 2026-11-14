@@ -1,4 +1,4 @@
-// components/layout/AppFooter.tsx
+// src/components/layout/AppFooter.tsx
 "use client";
 
 import React from "react";
@@ -10,12 +10,10 @@ import {
   ExternalLink,
 } from "lucide-react";
 
-const FOOTER_TINT = "rgba(30, 30, 30, 0.06)";
-
-const TOP_HAIRLINE = "rgba(0, 0, 0, 0.05)";
-const CHIP_BG = "rgba(255, 255, 255, 0.55)";
-const CHIP_BORDER = "rgba(0, 0, 0, 0.08)";
-const LINK_HOVER_BG = "rgba(0, 0, 0, 0.04)";
+const FOOTER_TINT = "rgba(15, 23, 42, 0.04)";
+const TOP_HAIRLINE = "rgba(15, 23, 42, 0.06)";
+const CHIP_BG = "rgba(255, 255, 255, 0.65)";
+const CHIP_BORDER = "rgba(15, 23, 42, 0.08)";
 
 type AppFooterProps = {
   brand?: string;
@@ -54,7 +52,7 @@ export default function AppFooter({
           className="h-px w-full"
           style={{
             backgroundColor: TOP_HAIRLINE,
-            boxShadow: "0 -1px 0 rgba(0,0,0,0.03)",
+            boxShadow: "0 -1px 0 rgba(0,0,0,0.02)",
           }}
         />
 
@@ -63,7 +61,7 @@ export default function AppFooter({
             <div className="space-y-3">
               <div className="flex items-center gap-2.5">
                 <div
-                  className="grid h-9 w-9 place-items-center rounded-2xl border"
+                  className="grid h-9 w-9 place-items-center rounded-2xl border backdrop-blur-xs shadow-2xs"
                   style={{
                     backgroundColor: CHIP_BG,
                     borderColor: CHIP_BORDER,
@@ -74,10 +72,10 @@ export default function AppFooter({
 
                 <div className="leading-tight">
                   <div className="flex items-center gap-2">
-                    <div className="font-semibold">{brand}</div>
+                    <div className="font-semibold tracking-tight">{brand}</div>
 
                     <span
-                      className="rounded-md border px-2 py-0.5 text-[11px] text-muted-foreground"
+                      className="rounded-md border px-2 py-0.5 text-[11px] text-muted-foreground backdrop-blur-xs"
                       style={{
                         backgroundColor: CHIP_BG,
                         borderColor: CHIP_BORDER,
@@ -90,13 +88,13 @@ export default function AppFooter({
               </div>
 
               <p className="max-w-[60ch] text-sm leading-relaxed text-muted-foreground">
-                Загружай или записывай аудио - получай спектрограмму, сегменты и признаки.
+                Загружай или записывай аудио — получай спектрограмму, сегменты и признаки.
                 Основной анализ доступен во вкладке «Во временном ряде».
               </p>
 
               <div className="flex flex-wrap gap-2">
                 <span
-                  className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs text-muted-foreground"
+                  className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs text-muted-foreground backdrop-blur-xs"
                   style={{
                     backgroundColor: CHIP_BG,
                     borderColor: CHIP_BORDER,
@@ -106,22 +104,12 @@ export default function AppFooter({
                   Безопасно
                 </span>
 
-                {showMadeWith && (
-                  <span
-                    className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs text-muted-foreground"
-                    style={{
-                      backgroundColor: CHIP_BG,
-                      borderColor: CHIP_BORDER,
-                    }}
-                  >
-                    Сделано и ладно ... 
-                  </span>
-                )}
+             
               </div>
             </div>
 
             <div className="space-y-3 md:justify-self-end">
-              <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
+              <div className="flex flex-wrap gap-x-3 gap-y-2 text-sm">
                 {links.map((l) => {
                   const ext = isExternal(l.href);
                   return (
@@ -130,14 +118,7 @@ export default function AppFooter({
                       href={l.href}
                       target={ext ? "_blank" : undefined}
                       rel={ext ? "noreferrer" : undefined}
-                      className="rounded-md px-1.5 py-0.5 text-muted-foreground transition-colors hover:text-foreground"
-                      style={{}}
-                      onMouseEnter={(e) => {
-                        (e.currentTarget.style.backgroundColor = LINK_HOVER_BG);
-                      }}
-                      onMouseLeave={(e) => {
-                        (e.currentTarget.style.backgroundColor = "transparent");
-                      }}
+                      className="rounded-md px-2 py-1 text-muted-foreground transition-colors hover:bg-black/[0.04] hover:text-foreground"
                     >
                       {l.label}
                     </a>
@@ -151,7 +132,7 @@ export default function AppFooter({
                     href={githubUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm text-muted-foreground transition hover:text-foreground"
+                    className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm text-muted-foreground backdrop-blur-xs shadow-2xs transition hover:bg-white/90 hover:text-foreground"
                     style={{
                       backgroundColor: CHIP_BG,
                       borderColor: CHIP_BORDER,
@@ -166,7 +147,7 @@ export default function AppFooter({
                 {email && (
                   <a
                     href={`mailto:${email}`}
-                    className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm text-muted-foreground transition hover:text-foreground"
+                    className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm text-muted-foreground backdrop-blur-xs shadow-2xs transition hover:bg-white/90 hover:text-foreground"
                     style={{
                       backgroundColor: CHIP_BG,
                       borderColor: CHIP_BORDER,
@@ -177,6 +158,7 @@ export default function AppFooter({
                   </a>
                 )}
               </div>
+
               <div className="text-xs text-muted-foreground/80">{copy}</div>
             </div>
           </div>

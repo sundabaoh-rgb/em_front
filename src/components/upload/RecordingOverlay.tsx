@@ -4,41 +4,26 @@ import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
+import { AlertCircle, Mic, RotateCcw } from "lucide-react";
 
-/**
- * Формат времени mm:ss.
- */
 function mmss(sec: number) {
   const m = Math.floor(sec / 60);
   const s = sec % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-/**
- * Ограничивает значение диапазоном [a, b].
- */
 function clamp(v: number, a: number, b: number) {
   return Math.max(a, Math.min(b, v));
 }
 
-/**
- * Линейная интерполяция.
- */
 function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
 }
 
-/**
- * Мягкая пульсация 0..1 (для “дыхания” анимации).
- */
 function softPulse(t: number) {
   return (Math.sin(t) + 1) / 2;
 }
 
-/**
- * Подбираем наиболее совместимый mimeType для MediaRecorder.
- * Это повышает шанс, что запись заработает в разных браузерах.
- */
 function pickMimeType(): string | undefined {
   const candidates = [
     "audio/webm;codecs=opus",
@@ -54,6 +39,23 @@ function pickMimeType(): string | undefined {
   }
 
   return undefined;
+}
+
+function humanizeMicError(err: unknown): string {
+  if (typeof window !== "undefined" && !window.isSecureContext) {
+    return "Браузер блокирует микрофон на небезопасном соединении. Откройте фронтенд по адресу http://localhost:3000.";
+  }
+  const name = (err as { name?: string })?.name || "";
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+    return "Микрофон не найден. Проверьте, подключена ли гарнитура/микрофон и выбран ли вход в настройках звука Linux.";
+  }
+  if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+    return "Доступ к микрофону запрещён. Разрешите использование микрофона в адресной строке браузера (значок слева от URL).";
+  }
+  if (name === "NotReadableError" || name === "TrackStartError") {
+    return "Микрофон занят другим приложением или недоступен для чтения.";
+  }
+  return "Не удалось получить доступ к микрофону. Проверьте настройки звука и разрешения браузера.";
 }
 
 type RecordingOverlayProps = {
@@ -74,15 +76,22 @@ export default function RecordingOverlay({ open, onClose, onRecorded }: Recordin
   const startedAtRef = useRef<number>(0);
 
   const mountedRef = useRef(false);
+  const canceledRef = useRef(false);
+  const stoppingRef = useRef(false);
+
+  // Храним колбэки в ref, чтобы ререндер родителя не перезапускал useEffect
+  const onCloseRef = useRef(onClose);
+  const onRecordedRef = useRef(onRecorded);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+    onRecordedRef.current = onRecorded;
+  }, [onClose, onRecorded]);
 
   const [sec, setSec] = useState(0);
-
   const [levelRaw, setLevelRaw] = useState(0);
   const levelSmoothRef = useRef(0);
-
   const [phaseTick, setPhaseTick] = useState(0);
-
-  const stoppingRef = useRef(false);
+  const [recError, setRecError] = useState<string | null>(null);
 
   const [portalEl, setPortalEl] = useState<HTMLElement | null>(null);
 
@@ -168,14 +177,33 @@ export default function RecordingOverlay({ open, onClose, onRecorded }: Recordin
 
   const start = useCallback(async () => {
     stoppingRef.current = false;
+    canceledRef.current = false;
+    setRecError(null);
 
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-      },
-    });
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setRecError(humanizeMicError(new Error("MediaDevices unavailable")));
+      return;
+    }
+
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      });
+    } catch {
+      // Фоллбэк на базовые настройки, если драйвер на Linux не принял флаги
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    }
+
+    // Если окно успели закрыть, пока ждали разрешение от браузера
+    if (!mountedRef.current || canceledRef.current) {
+      stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
 
     streamRef.current = stream;
 
@@ -195,48 +223,63 @@ export default function RecordingOverlay({ open, onClose, onRecorded }: Recordin
       await stopMeter();
       stopTimer();
 
+      if (canceledRef.current || chunksRef.current.length === 0) return;
+
       const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
       const file = new File([blob], `recording-${Date.now()}.webm`, { type: blob.type });
 
-      onRecorded(file);
+      onRecordedRef.current(file);
     };
 
     mr.start();
     startMeter(stream);
     startTimer();
-  }, [hardStopStream, onRecorded, startMeter, startTimer, stopMeter, stopTimer]);
+  }, [hardStopStream, startMeter, startTimer, stopMeter, stopTimer]);
 
-  const stop = useCallback(() => {
-    if (stoppingRef.current) return;
-    stoppingRef.current = true;
+  const stop = useCallback(
+    (isCancel = false) => {
+      if (stoppingRef.current) return;
+      stoppingRef.current = true;
+      canceledRef.current = isCancel;
 
-    try {
-      recorderRef.current?.stop();
-    } catch {
-      hardStopStream();
-      stopMeter();
-      stopTimer();
-    } finally {
-      recorderRef.current = null;
-    }
-  }, [hardStopStream, stopMeter, stopTimer]);
+      try {
+        if (recorderRef.current && recorderRef.current.state !== "inactive") {
+          recorderRef.current.stop();
+        } else {
+          hardStopStream();
+          void stopMeter();
+          stopTimer();
+        }
+      } catch {
+        hardStopStream();
+        void stopMeter();
+        stopTimer();
+      } finally {
+        recorderRef.current = null;
+      }
+    },
+    [hardStopStream, stopMeter, stopTimer]
+  );
 
-  const closeAll = useCallback(() => {
-    stop();
-    onClose();
-  }, [onClose, stop]);
+  const finishRecording = useCallback(() => {
+    stop(false);
+    onCloseRef.current();
+  }, [stop]);
+
+  const cancelRecording = useCallback(() => {
+    stop(true);
+    onCloseRef.current();
+  }, [stop]);
 
   useEffect(() => {
     mountedRef.current = true;
     setPortalEl(document.body);
-    const prevOverflow = document.body.style.overflow;
-
     return () => {
       mountedRef.current = false;
-      document.body.style.overflow = prevOverflow;
     };
   }, []);
 
+  // Зависим ТОЛЬКО от `open`, чтобы никакие ререндеры не сбрасывали запись
   useEffect(() => {
     if (!open) {
       document.body.style.overflow = "";
@@ -246,24 +289,30 @@ export default function RecordingOverlay({ open, onClose, onRecorded }: Recordin
 
     document.body.style.overflow = "hidden";
 
-    start().catch(() => {
-      onClose();
+    start().catch((err) => {
+      console.error("Microphone error:", err);
+      if (mountedRef.current) {
+        setRecError(humanizeMicError(err));
+      }
     });
 
     return () => {
       document.body.style.overflow = "";
       stopTimer();
 
+      canceledRef.current = true;
       try {
-        recorderRef.current?.stop();
+        if (recorderRef.current && recorderRef.current.state !== "inactive") {
+          recorderRef.current.stop();
+        }
       } catch {}
       recorderRef.current = null;
 
       hardStopStream();
-      stopMeter();
+      void stopMeter();
       stoppingRef.current = false;
     };
-  }, [open, onClose, start, hardStopStream, stopMeter, stopTimer, stopTimer]);
+  }, [open, start, hardStopStream, stopMeter, stopTimer]);
 
   const amp = useMemo(() => {
     const boosted = clamp(levelRaw * 1.25, 0, 1);
@@ -300,186 +349,141 @@ export default function RecordingOverlay({ open, onClose, onRecorded }: Recordin
 
   return createPortal(
     <div className="fixed inset-0 z-[9999] isolate">
-      {/* backdrop */}
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={closeAll} />
+      <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm" onClick={cancelRecording} />
 
-      {/* modal */}
       <div className="absolute inset-0 flex items-center justify-center p-4">
-        <div className="relative w-full max-w-4xl">
-          <div className="relative overflow-hidden rounded-3xl border bg-background/65 backdrop-blur-xl shadow-2xl">
-            <div
-              className="absolute inset-0"
-              style={{
-                background:
-                  "radial-gradient(1200px 600px at 50% 25%, rgba(99,102,241,0.22), transparent 58%), radial-gradient(900px 450px at 80% 60%, rgba(236,72,153,0.16), transparent 55%), radial-gradient(900px 500px at 20% 70%, rgba(34,197,94,0.08), transparent 55%)",
-              }}
-            />
-
-            <div
-              className="absolute inset-x-0 top-0 h-24"
-              style={{
-                background: "linear-gradient(to bottom, rgba(0,0,0,0.08), rgba(0,0,0,0))",
-              }}
-            />
-
+        <div className="relative w-full max-w-xl">
+          <div className="relative overflow-hidden rounded-3xl border border-white/20 bg-background/95 backdrop-blur-xl shadow-2xl">
             <button
               type="button"
-              onClick={closeAll}
-              className="absolute right-4 top-4 z-20 h-10 w-10 rounded-full border bg-background/75 hover:bg-background/90 grid place-items-center shadow-sm"
-              aria-label="close"
+              onClick={cancelRecording}
+              className="cursor-pointer absolute right-4 top-4 z-20 h-9 w-9 rounded-full border bg-background/80 hover:bg-background grid place-items-center text-muted-foreground hover:text-foreground shadow-2xs transition"
+              aria-label="Закрыть"
             >
               ✕
             </button>
 
-            <div className="relative p-6 md:p-10">
-              <div className="flex items-start justify-between gap-3">
+            <div className="relative p-6 md:p-8">
+              <div className="flex items-start justify-between gap-3 pr-10">
                 <div>
-                  <div className="text-lg md:text-xl font-semibold">Запись</div>
-                  <div className="text-sm text-muted-foreground mt-1">
-                    Говори в микрофон. Нажми “Стоп”, когда закончишь.
+                  <div className="text-lg font-semibold tracking-tight">Запись с микрофона</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    {recError
+                      ? "Не удалось начать запись"
+                      : "Говорите в микрофон и нажмите «Готово» для сохранения"}
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <div
-                    className="relative inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm border shadow-sm select-none"
-                    style={{
-                      background:
-                        "linear-gradient(90deg, rgba(239,68,68,0.20), rgba(236,72,153,0.16), rgba(99,102,241,0.10))",
-                      boxShadow: `0 10px 30px rgba(239,68,68,${0.10 + amp * 0.22})`,
-                      borderColor: `rgba(239,68,68,${0.25 + amp * 0.30})`,
-                    }}
-                  >
-                    <span className="relative flex h-2.5 w-2.5">
-                      <span
-                        className="absolute inline-flex h-full w-full rounded-full"
-                        style={{
-                          background: "rgba(239,68,68,0.55)",
-                          transform: `scale(${1 + amp * 0.95})`,
-                          filter: "blur(2px)",
-                          opacity: 0.55 + amp * 0.3,
-                        }}
-                      />
-                      <span
-                        className="relative inline-flex h-2.5 w-2.5 rounded-full"
-                        style={{
-                          background: "rgb(239,68,68)",
-                          boxShadow: `0 0 14px rgba(239,68,68,${0.35 + amp * 0.55})`,
-                        }}
-                      />
-                    </span>
-
-                    <span className="font-medium tracking-wide">REC</span>
-
-                    <span className="ml-1 inline-flex items-end gap-1 h-4">
-                      {eq.map((v, i) => (
-                        <span
-                          key={`eq-${i}`}
-                          className="w-1 rounded-full"
-                          style={{
-                            height: `${Math.round(6 + v * 14)}px`,
-                            background:
-                              "linear-gradient(to top, rgba(239,68,68,0.95), rgba(236,72,153,0.85), rgba(99,102,241,0.75))",
-                            opacity: 0.9,
-                            boxShadow: `0 0 10px rgba(99,102,241,${0.10 + amp * 0.25})`,
-                            transition: "height 70ms linear",
-                          }}
-                        />
-                      ))}
-                    </span>
-                  </div>
-
-                  <span className="font-mono text-sm text-muted-foreground tabular-nums">
-                    {mmss(sec)}
-                  </span>
-                </div>
-              </div>
-
-              <div className="mt-8 md:mt-10 grid place-items-center">
-                <div className="relative h-56 w-56 md:h-64 md:w-64 grid place-items-center">
-                  <div
-                    className="absolute inset-0 rounded-full"
-                    style={{ boxShadow: `0 0 95px rgba(99,102,241,${rings.glow})` }}
-                  />
-
-                  <div
-                    className="absolute inset-0 rounded-full border bg-white/5"
-                    style={{
-                      transform: `scale(${rings.r3})`,
-                      borderColor: `rgba(99,102,241,${0.18 + amp * 0.22})`,
-                    }}
-                  />
-                  <div
-                    className="absolute inset-0 rounded-full border bg-white/6"
-                    style={{
-                      transform: `scale(${rings.r2})`,
-                      borderColor: `rgba(236,72,153,${0.14 + amp * 0.18})`,
-                    }}
-                  />
-                  <div
-                    className="absolute inset-0 rounded-full border bg-white/7"
-                    style={{
-                      transform: `scale(${rings.r1})`,
-                      borderColor: `rgba(239,68,68,${0.12 + amp * 0.16})`,
-                    }}
-                  />
-
-                  <button
-                    type="button"
-                    onClick={closeAll}
-                    className="relative h-28 w-28 md:h-32 md:w-32 rounded-full bg-background/88 border shadow-xl grid place-items-center cursor-pointer active:scale-[0.99] transition-transform"
-                    aria-label="stop recording"
-                  >
+                {!recError ? (
+                  <div className="flex items-center gap-2.5">
                     <div
-                      className="absolute inset-0 rounded-full"
+                      className="relative inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs border shadow-2xs select-none"
                       style={{
-                        boxShadow: `inset 0 0 0 1px rgba(255,255,255,0.06), 0 0 32px rgba(99,102,241,${
-                          0.10 + amp * 0.24
-                        })`,
+                        background: "rgba(239,68,68,0.10)",
+                        borderColor: `rgba(239,68,68,${0.25 + amp * 0.30})`,
                       }}
-                    />
-                    <svg width="34" height="34" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                      <path
-                        d="M12 14a3 3 0 0 0 3-3V7a3 3 0 0 0-6 0v4a3 3 0 0 0 3 3Z"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className="text-foreground"
-                      />
-                      <path
-                        d="M19 11a7 7 0 0 1-14 0"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className="text-foreground"
-                      />
-                      <path
-                        d="M12 18v3"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className="text-foreground"
-                      />
-                    </svg>
-                  </button>
+                    >
+                      <span className="relative flex h-2 w-2">
+                        <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500" />
+                      </span>
+
+                      <span className="font-semibold text-red-600 tracking-wider">REC</span>
+
+                      <span className="ml-0.5 inline-flex items-end gap-0.5 h-3.5">
+                        {eq.map((v, i) => (
+                          <span
+                            key={`eq-${i}`}
+                            className="w-0.5 rounded-full bg-red-500"
+                            style={{
+                              height: `${Math.round(4 + v * 10)}px`,
+                              transition: "height 70ms linear",
+                            }}
+                          />
+                        ))}
+                      </span>
+                    </div>
+
+                    <span className="font-mono text-sm font-medium text-foreground tabular-nums">
+                      {mmss(sec)}
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+
+              {recError ? (
+                <div className="my-8 rounded-2xl border border-red-200 bg-red-50/90 p-5 text-red-900 space-y-3">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
+                    <div className="text-sm leading-relaxed">{recError}</div>
+                  </div>
+                  <div className="flex items-center gap-2 pt-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="bg-white gap-1.5"
+                      onClick={() => {
+                        start().catch((err) => setRecError(humanizeMicError(err)));
+                      }}
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      Попробовать снова
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={cancelRecording}>
+                      Закрыть
+                    </Button>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <>
+                  <div className="my-10 grid place-items-center">
+                    <div className="relative h-44 w-44 grid place-items-center">
+                      <div
+                        className="absolute inset-0 rounded-full"
+                        style={{ boxShadow: `0 0 80px rgba(99,102,241,${rings.glow})` }}
+                      />
+                      <div
+                        className="absolute inset-0 rounded-full border"
+                        style={{
+                          transform: `scale(${rings.r3})`,
+                          borderColor: `rgba(99,102,241,${0.18 + amp * 0.22})`,
+                        }}
+                      />
+                      <div
+                        className="absolute inset-0 rounded-full border"
+                        style={{
+                          transform: `scale(${rings.r2})`,
+                          borderColor: `rgba(236,72,153,${0.14 + amp * 0.18})`,
+                        }}
+                      />
+                      <div
+                        className="absolute inset-0 rounded-full border"
+                        style={{
+                          transform: `scale(${rings.r1})`,
+                          borderColor: `rgba(239,68,68,${0.12 + amp * 0.16})`,
+                        }}
+                      />
 
-              <div className="mt-12 flex items-center justify-center gap-3">
-                <Button variant="secondary" onClick={closeAll} className="rounded-full px-8">
-                  Отмена
-                </Button>
-                <Button variant="destructive" onClick={closeAll} className="rounded-full px-10">
-                  Стоп
-                </Button>
-              </div>
+                      <button
+                        type="button"
+                        onClick={finishRecording}
+                        className="relative h-24 w-24 rounded-full bg-background border shadow-lg grid place-items-center cursor-pointer hover:scale-105 active:scale-95 transition-transform"
+                        aria-label="Остановить и сохранить"
+                      >
+                        <Mic className="h-8 w-8 text-foreground" />
+                      </button>
+                    </div>
+                  </div>
 
-              <div className="mt-3 text-center text-xs text-muted-foreground">
-                Запись остановится и файл автоматически появится в карточке.
-              </div>
+                  <div className="flex items-center justify-center gap-3">
+                    <Button variant="outline" onClick={cancelRecording} className="rounded-xl px-6">
+                      Отмена
+                    </Button>
+                    <Button variant="default" onClick={finishRecording} className="rounded-xl px-8">
+                      Готово (Сохранить)
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

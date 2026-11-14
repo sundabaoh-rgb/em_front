@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import AppHeader from "@/components/layout/AppHeader";
 import SpectrogramPanel from "@/components/spectrogram/SpectrogramPanel";
-import RightPanel from "@/components/spectrogram/RightPanel";
 import { useTaskStore } from "@/store/taskStore";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -13,6 +12,7 @@ import AppFooter from "@/components/layout/AppFooter";
 import LabelDistributionCard from "@/components/tables/LabelDistributionCard";
 import ScrollToTopFab from "@/components/ui/ScrollToTopFab";
 import FeaturesTablePanel from "@/components/features/FeaturesTablePanel";
+import { Activity, Layers, RotateCcw, SlidersHorizontal, Sparkles } from "lucide-react";
 
 function statusTone(status: string) {
   const s = (status || "").toLowerCase();
@@ -49,7 +49,6 @@ export default function TimelinePage() {
   const mainEmotion = useTaskStore((s) => s.mainEmotion);
   const segments = useTaskStore((s) => s.segments);
 
-  // NEW: csv file link + cache info (optional use for KPI/badges)
   const featuresFile = useTaskStore((s) => s.featuresFile);
   const featuresCache = useTaskStore((s) => s.featuresCache);
 
@@ -77,9 +76,7 @@ export default function TimelinePage() {
         activeTabRef.current = j.tab;
         setTab(j.tab);
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, []);
 
   useEffect(() => {
@@ -94,9 +91,7 @@ export default function TimelinePage() {
             SCROLL_KEY,
             JSON.stringify({ tab: activeTabRef.current, scroll: scrollByTabRef.current })
           );
-        } catch {
-          // ignore
-        }
+        } catch {}
       });
     };
 
@@ -118,9 +113,7 @@ export default function TimelinePage() {
 
     try {
       sessionStorage.setItem(SCROLL_KEY, JSON.stringify({ tab: nextTab, scroll: scrollByTabRef.current }));
-    } catch {
-      // ignore
-    }
+    } catch {}
   };
 
   useEffect(() => {
@@ -149,12 +142,8 @@ export default function TimelinePage() {
 
   const kpi = useMemo(() => {
     const segCount = segments?.length ?? 0;
-
-    // we no longer know rows/cols without parsing CSV;
-    // show what we reliably have (frames/bins) + CSV availability/cached size.
     const frames = spectrogram?.frames ?? "—";
     const bins = spectrogram?.melBins ?? "—";
-
     const hasCsv = Boolean(featuresFile?.url);
     const cachedKb = featuresCache?.blob?.size ? Math.round(featuresCache.blob.size / 1024) : null;
 
@@ -164,98 +153,108 @@ export default function TimelinePage() {
   const sourceLabel = spectrogram ? "server" : "demo";
 
   return (
-    <main className="min-h-screen bg-muted/30 flex flex-col">
-      <div className="mx-auto w-full max-w-[92rem] px-3 py-6 md:px-6 md:py-8 2xl:px-10 space-y-6 flex-1">
-        <AppHeader title="Во временном ряде" subtitle="Спектрограмма, сегменты и признаки" />
+    <main className="min-h-screen bg-background flex flex-col">
+      <div className="mx-auto w-full max-w-[92rem] px-4 py-6 md:px-6 md:py-8 2xl:px-10 space-y-6 flex-1">
+        <AppHeader title="Во временном ряде" subtitle="Детальная мел-спектрограмма, разметка сегментов и низкоуровневые признаки" />
 
-        <Tabs value={tab} onValueChange={onTabChange} className="space-y-4">
+        <Tabs value={tab} onValueChange={onTabChange} className="space-y-5">
           <div
             id="timeline-tabs"
-            className="sticky top-0 z-70 -mx-3 px-3 py-2 md:-mx-6 md:px-6 2xl:-mx-10 2xl:px-10 bg-muted/30 backdrop-blur supports-[backdrop-filter]:bg-muted/20"
+            className="sticky top-0 z-30 -mx-4 px-4 py-2.5 md:-mx-6 md:px-6 2xl:-mx-10 2xl:px-10 bg-background/85 backdrop-blur-md border-b border-slate-200/60"
           >
-            <TabsList className="w-full sm:w-auto rounded-xl bg-background/70 border p-1 shadow-sm">
-              <TabsTrigger value="timeline" className="rounded-lg px-3">
+            <TabsList className="w-full sm:w-auto rounded-xl bg-slate-200/70 p-1">
+              <TabsTrigger value="timeline" className="rounded-lg px-4 text-xs font-medium">
                 Во временном ряде
               </TabsTrigger>
-              <TabsTrigger value="low" className="rounded-lg px-3">
-                Низкоуровневые
+              <TabsTrigger value="low" className="rounded-lg px-4 text-xs font-medium">
+                Низкоуровневые признаки
               </TabsTrigger>
             </TabsList>
           </div>
 
-          <TabsContent value="timeline" className="space-y-4">
-            <Card className="rounded-2xl border bg-background shadow-sm overflow-hidden">
-              <CardHeader className="border-b">
-                <div className="flex items-center justify-between gap-3">
+          <TabsContent value="timeline" className="space-y-6">
+            <Card className="overflow-hidden">
+              <CardHeader className="border-b bg-slate-50/50 py-3.5 px-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="min-w-0">
-                    <CardTitle className="truncate">MEL Спектрограмма</CardTitle>
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      Наведи на верхнюю полосу сегментов - увидишь детали. Переключай режимы внутри спектрограммы.
-                    </div>
+                    <CardTitle className="text-base truncate">Интерактивная мел-спектрограмма</CardTitle>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      Наведите курсор на полосу сегментов сверху для просмотра уверенности модели
+                    </p>
                   </div>
 
                   <div className="flex items-center gap-2">
                     <Badge variant={statusTone(String(status))}>{String(status)}</Badge>
-                    <Button variant="outline" size="sm" onClick={reset}>
+                    <Button variant="outline" size="sm" onClick={reset} className="gap-1.5 h-8 text-xs bg-white">
+                      <RotateCcw className="h-3.5 w-3.5" />
                       Сброс
                     </Button>
                   </div>
                 </div>
               </CardHeader>
 
-              <CardContent className="p-4 md:p-6 space-y-4">
+              <CardContent className="p-5 space-y-5">
                 <div className="w-full">
                   <SpectrogramPanel />
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-4">
-                  <div className="rounded-2xl border bg-muted/20 p-4">
-                    <div className="text-xs text-muted-foreground">Основная эмоция</div>
-                    <div className="mt-2">
-                      <Badge variant="secondary" className="px-3 py-1 text-sm">
+                {/* Сетка KPI карточек */}
+                <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-4 flex flex-col justify-between">
+                    <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
+                      <span>Основная эмоция</span>
+                      <Sparkles className="h-4 w-4 text-primary/70" />
+                    </div>
+                    <div className="mt-3">
+                      <Badge variant="secondary" className="px-3 py-1 text-sm font-semibold">
                         {mainEmotion ?? "—"}
                       </Badge>
                     </div>
                   </div>
 
-                  <div className="rounded-2xl border bg-muted/20 p-4">
-                    <div className="text-xs text-muted-foreground">Сегментов</div>
-                    <div className="mt-2 text-2xl font-semibold tabular-nums">{kpi.segCount}</div>
-                    <div className="text-xs text-muted-foreground mt-1">всего в payload</div>
-                  </div>
-
-                  <div className="rounded-2xl border bg-muted/20 p-4">
-                    <div className="text-xs text-muted-foreground">Спектрограмма</div>
-                    <div className="mt-2 text-sm">
-                      <span className="text-muted-foreground">frames:</span>{" "}
-                      <span className="font-medium tabular-nums">{kpi.frames}</span>
-                      <span className="mx-2 text-muted-foreground">•</span>
-                      <span className="text-muted-foreground">bins:</span>{" "}
-                      <span className="font-medium tabular-nums">{kpi.bins}</span>
+                  <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-4 flex flex-col justify-between">
+                    <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
+                      <span>Сегментов найдено</span>
+                      <Layers className="h-4 w-4 text-primary/70" />
                     </div>
-                    <div className="text-xs text-muted-foreground mt-1">источник: {sourceLabel}</div>
+                    <div className="mt-2 flex items-baseline gap-2">
+                      <span className="text-2xl font-bold tracking-tight tabular-nums">{kpi.segCount}</span>
+                      <span className="text-xs text-muted-foreground">интервалов</span>
+                    </div>
                   </div>
 
-                  <div className="rounded-2xl border bg-muted/20 p-4">
-                    <div className="text-xs text-muted-foreground">Параметры обработки</div>
-
-                    <div className="mt-2 grid gap-1.5 text-sm">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-muted-foreground">модель</span>
-                        <span className="font-medium">{prettyModel(runModelId)}</span>
+                  <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-4 flex flex-col justify-between">
+                    <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
+                      <span>Размерность спектра</span>
+                      <Activity className="h-4 w-4 text-primary/70" />
+                    </div>
+                    <div className="mt-2 space-y-1 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Кадры (frames):</span>
+                        <span className="font-semibold tabular-nums">{kpi.frames}</span>
                       </div>
-
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-muted-foreground">окно</span>
-                        <span className="font-medium tabular-nums">
-                          {typeof runWindowMs === "number" ? `${runWindowMs} ms` : "—"}
-                        </span>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Частоты (bins):</span>
+                        <span className="font-semibold tabular-nums">{kpi.bins} ({sourceLabel})</span>
                       </div>
+                    </div>
+                  </div>
 
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-muted-foreground">CSV</span>
-                        <span className="font-medium">
-                          {kpi.hasCsv ? (kpi.cachedKb ? `cached ~${kpi.cachedKb} KB` : "available") : "—"}
+                  <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-4 flex flex-col justify-between">
+                    <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
+                      <span>Конфигурация</span>
+                      <SlidersHorizontal className="h-4 w-4 text-primary/70" />
+                    </div>
+                    <div className="mt-2 space-y-1 text-xs">
+                      <div className="flex justify-between gap-2">
+                        <span className="text-muted-foreground">Модель:</span>
+                        <span className="font-semibold truncate">{prettyModel(runModelId)}</span>
+                      </div>
+                      <div className="flex justify-between gap-2">
+                        <span className="text-muted-foreground">Окно / CSV:</span>
+                        <span className="font-semibold tabular-nums">
+                          {typeof runWindowMs === "number" ? `${runWindowMs} мс` : "—"} •{" "}
+                          {kpi.hasCsv ? (kpi.cachedKb ? `${kpi.cachedKb} KB` : "есть") : "нет"}
                         </span>
                       </div>
                     </div>
@@ -268,16 +267,12 @@ export default function TimelinePage() {
           </TabsContent>
 
           <TabsContent value="low">
-            <Card className="rounded-2xl border bg-background shadow-sm overflow-hidden">
-              <CardHeader className="border-b">
-                <CardTitle>Низкоуровневые признаки</CardTitle>
+            <Card className="overflow-hidden">
+              <CardHeader className="border-b bg-slate-50/50 py-3.5 px-5">
+                <CardTitle className="text-base">Низкоуровневые акустические признаки</CardTitle>
               </CardHeader>
 
-              {/* IMPORTANT: CardContent must not be muted text globally; table needs normal colors */}
-              <CardContent className="p-5 space-y-4">
-                {/* If RightPanel is still useful for non-table stuff, keep it without tableOnly */}
-                {/* <RightPanel title="Сводка" /> */}
-                {/* New full featured CSV viewer */}
+              <CardContent className="p-5">
                 <FeaturesTablePanel />
               </CardContent>
             </Card>

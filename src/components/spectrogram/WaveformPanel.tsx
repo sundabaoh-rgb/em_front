@@ -72,6 +72,7 @@ export default function WaveformPanel(props: { height?: number; embedded?: boole
 
   const file = useTaskStore((s) => s.audioFile);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
 
   const [data, setData] = useState<WaveformData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -105,81 +106,98 @@ export default function WaveformPanel(props: { height?: number; embedded?: boole
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const wrap = wrapRef.current;
+    if (!canvas || !wrap) return;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const dpr = window.devicePixelRatio || 1;
-    const w = canvas.clientWidth || 600;
-    const h = height;
+    const draw = () => {
+      const dpr = window.devicePixelRatio || 1;
+      const w = wrap.clientWidth || 600;
+      const h = height;
 
-    canvas.width = Math.floor(w * dpr);
-    canvas.height = Math.floor(h * dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      canvas.width = Math.floor(w * dpr);
+      canvas.height = Math.floor(h * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    ctx.clearRect(0, 0, w, h);
+      ctx.clearRect(0, 0, w, h);
 
-    ctx.fillStyle = "rgba(2,6,23,0.03)";
-    ctx.fillRect(0, 0, w, h);
-
-    ctx.strokeStyle = "rgba(15,23,42,0.10)";
-    ctx.lineWidth = 1;
-    for (let i = 1; i <= 3; i++) {
-      const y = (h * i) / 4;
+      // Центральная опорная линия
+      const mid = h / 2;
+      ctx.strokeStyle = "rgba(15,23,42,0.08)";
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(0, y + 0.5);
-      ctx.lineTo(w, y + 0.5);
+      ctx.moveTo(0, mid + 0.5);
+      ctx.lineTo(w, mid + 0.5);
       ctx.stroke();
-    }
 
-    if (!data?.peaks?.length) {
-      ctx.fillStyle = "rgba(15,23,42,0.55)";
-      ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
-      ctx.fillText(file ? (loading ? "строим waveform…" : "waveform недоступен") : "выбери аудио слева", 12, 20);
-      return;
-    }
+      if (!data?.peaks?.length) {
+        ctx.fillStyle = "rgba(100,116,139,0.75)";
+        ctx.font = "12px ui-sans-serif, system-ui, -apple-system, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(
+          file ? (loading ? "Строим осциллограмму…" : "Сигнал недоступен") : "Выберите аудиофайл для предпросмотра волны",
+          w / 2,
+          mid + 4
+        );
+        ctx.textAlign = "start";
+        return;
+      }
 
-    const peaks = data.peaks;
-    const mid = h / 2;
-    const padX = 10;
-    const usableW = Math.max(1, w - padX * 2);
+      const peaks = data.peaks;
+      const padX = 6;
+      const usableW = Math.max(1, w - padX * 2);
 
-    ctx.strokeStyle = "rgba(2,132,199,0.45)";
-    ctx.lineWidth = 1;
+      // Рисуем современные скругленные столбики с шагом 3px
+      const stepPx = 3;
+      const bars = Math.max(1, Math.floor(usableW / stepPx));
 
-    const bars = Math.min(peaks.length, Math.floor(usableW));
-    for (let i = 0; i < bars; i++) {
-      const t = i / (bars - 1 || 1);
-      const x = padX + t * usableW;
-      const p = peaks[Math.floor(t * (peaks.length - 1))] || 0;
-      const amp = clamp(p, 0, 1) * (h * 0.42);
+      const grad = ctx.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, "rgba(14, 165, 233, 0.85)");
+      grad.addColorStop(0.5, "rgba(56, 189, 248, 0.95)");
+      grad.addColorStop(1, "rgba(14, 165, 233, 0.85)");
 
-      ctx.beginPath();
-      ctx.moveTo(x + 0.5, mid - amp);
-      ctx.lineTo(x + 0.5, mid + amp);
-      ctx.stroke();
-    }
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 1.8;
+      ctx.lineCap = "round";
+
+      for (let i = 0; i < bars; i++) {
+        const t = i / (bars - 1 || 1);
+        const x = padX + i * stepPx;
+        const p = peaks[Math.floor(t * (peaks.length - 1))] || 0;
+        const amp = Math.max(1.5, clamp(p, 0, 1) * (h * 0.44));
+
+        ctx.beginPath();
+        ctx.moveTo(x, mid - amp);
+        ctx.lineTo(x, mid + amp);
+        ctx.stroke();
+      }
+    };
+
+    draw();
+    const ro = new ResizeObserver(draw);
+    ro.observe(wrap);
+    return () => ro.disconnect();
   }, [data, height, loading, file]);
 
-  return (
-    <div className={embedded ? "" : "rounded-2xl border bg-background shadow-sm overflow-hidden"}>
-      {!embedded ? (
-        <div className="flex items-center justify-between px-4 py-2 border-b">
-          <div className="text-xs text-muted-foreground">Сигнал</div>
-          <div className="text-xs text-muted-foreground tabular-nums">длина: {durationText}</div>
-        </div>
-      ) : (
-        <div className="flex items-center justify-between px-4 py-2">
-          <div className="text-xs text-muted-foreground">Сигнал</div>
-          <div className="text-xs text-muted-foreground tabular-nums">длина: {durationText}</div>
-        </div>
-      )}
+  if (embedded) {
+    return (
+      <div ref={wrapRef} className="relative w-full overflow-hidden rounded-xl bg-background/60">
+        <canvas ref={canvasRef} className="block w-full" style={{ height }} />
+      </div>
+    );
+  }
 
-      <div className={embedded ? "px-3 pb-3" : "px-3 py-3"}>
-        <div className="relative rounded-2xl border bg-background overflow-hidden">
+  return (
+    <div className="rounded-2xl border bg-background shadow-xs overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/20">
+        <div className="text-xs font-medium text-muted-foreground">Сигнал</div>
+        <div className="text-xs text-muted-foreground tabular-nums">длина: {durationText}</div>
+      </div>
+      <div className="p-3">
+        <div ref={wrapRef} className="relative w-full overflow-hidden rounded-xl bg-muted/15">
           <canvas ref={canvasRef} className="block w-full" style={{ height }} />
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-background to-transparent" />
         </div>
       </div>
     </div>
