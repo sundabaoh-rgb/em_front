@@ -79,7 +79,6 @@ export default function RecordingOverlay({ open, onClose, onRecorded }: Recordin
   const canceledRef = useRef(false);
   const stoppingRef = useRef(false);
 
-  // Храним колбэки в ref, чтобы ререндер родителя не перезапускал useEffect
   const onCloseRef = useRef(onClose);
   const onRecordedRef = useRef(onRecorded);
   useEffect(() => {
@@ -195,11 +194,9 @@ export default function RecordingOverlay({ open, onClose, onRecorded }: Recordin
         },
       });
     } catch {
-      // Фоллбэк на базовые настройки, если драйвер на Linux не принял флаги
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     }
 
-    // Если окно успели закрыть, пока ждали разрешение от браузера
     if (!mountedRef.current || canceledRef.current) {
       stream.getTracks().forEach((t) => t.stop());
       return;
@@ -219,57 +216,71 @@ export default function RecordingOverlay({ open, onClose, onRecorded }: Recordin
     };
 
     mr.onstop = async () => {
+      const mime = mr.mimeType || "audio/webm";
       hardStopStream();
       await stopMeter();
       stopTimer();
 
-      if (canceledRef.current || chunksRef.current.length === 0) return;
+      if (canceledRef.current || chunksRef.current.length === 0) {
+        onCloseRef.current();
+        return;
+      }
 
-      const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
+      const blob = new Blob(chunksRef.current, { type: mime });
       const file = new File([blob], `recording-${Date.now()}.webm`, { type: blob.type });
 
+      // onRecorded в AudioUploadPanel сам закрывает окно и передаёт файл в плеер
       onRecordedRef.current(file);
     };
 
-    mr.start();
+    // Собираем чанки каждые 200 мс, чтобы буфер гарантированно никогда не был пустым
+    mr.start(200);
     startMeter(stream);
     startTimer();
   }, [hardStopStream, startMeter, startTimer, stopMeter, stopTimer]);
 
-  const stop = useCallback(
-    (isCancel = false) => {
-      if (stoppingRef.current) return;
-      stoppingRef.current = true;
-      canceledRef.current = isCancel;
+  const finishRecording = useCallback(() => {
+    if (stoppingRef.current) return;
+    stoppingRef.current = true;
+    canceledRef.current = false;
 
+    const mr = recorderRef.current;
+    if (mr && mr.state !== "inactive") {
       try {
-        if (recorderRef.current && recorderRef.current.state !== "inactive") {
-          recorderRef.current.stop();
-        } else {
-          hardStopStream();
-          void stopMeter();
-          stopTimer();
-        }
+        mr.stop(); // Дожидаемся асинхронного mr.onstop, который вызовет onRecorded(file)
       } catch {
         hardStopStream();
         void stopMeter();
         stopTimer();
-      } finally {
-        recorderRef.current = null;
+        onCloseRef.current();
       }
-    },
-    [hardStopStream, stopMeter, stopTimer]
-  );
-
-  const finishRecording = useCallback(() => {
-    stop(false);
-    onCloseRef.current();
-  }, [stop]);
+    } else {
+      hardStopStream();
+      void stopMeter();
+      stopTimer();
+      onCloseRef.current();
+    }
+    recorderRef.current = null;
+  }, [hardStopStream, stopMeter, stopTimer]);
 
   const cancelRecording = useCallback(() => {
-    stop(true);
+    if (stoppingRef.current) return;
+    stoppingRef.current = true;
+    canceledRef.current = true;
+
+    const mr = recorderRef.current;
+    recorderRef.current = null;
+    try {
+      if (mr && mr.state !== "inactive") {
+        mr.stop();
+      }
+    } catch {}
+
+    hardStopStream();
+    void stopMeter();
+    stopTimer();
     onCloseRef.current();
-  }, [stop]);
+  }, [hardStopStream, stopMeter, stopTimer]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -279,7 +290,6 @@ export default function RecordingOverlay({ open, onClose, onRecorded }: Recordin
     };
   }, []);
 
-  // Зависим ТОЛЬКО от `open`, чтобы никакие ререндеры не сбрасывали запись
   useEffect(() => {
     if (!open) {
       document.body.style.overflow = "";
@@ -300,7 +310,11 @@ export default function RecordingOverlay({ open, onClose, onRecorded }: Recordin
       document.body.style.overflow = "";
       stopTimer();
 
-      canceledRef.current = true;
+      // Ставим флаг отмены ТОЛЬКО если окно закрылось внезапно, а не через кнопку «Готово»
+      if (!stoppingRef.current) {
+        canceledRef.current = true;
+      }
+
       try {
         if (recorderRef.current && recorderRef.current.state !== "inactive") {
           recorderRef.current.stop();

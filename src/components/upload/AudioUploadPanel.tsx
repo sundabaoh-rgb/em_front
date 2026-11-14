@@ -455,10 +455,46 @@ export default function AudioUploadPanel() {
 
   const progress01 = totalTime > 0 ? clamp(curTime / totalTime, 0, 1) : 0;
 
+  /* -------- синхронизация с WaveformPanel -------- */
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent("em-audio-state", {
+        detail: { progress01, isPlaying, curTime, totalTime },
+      })
+    );
+  }, [progress01, isPlaying, curTime, totalTime]);
+
+  useEffect(() => {
+    const onExternalSeek = async (e: Event) => {
+      const custom = e as CustomEvent<{ ratio?: number; autoPlay?: boolean }>;
+      const ratio = custom.detail?.ratio;
+      if (typeof ratio !== "number") return;
+
+      const a = audioRef.current;
+      if (!a) return;
+
+      const maxT = totalTime > 0 ? totalTime : isValidDuration(a.duration) ? a.duration : 0;
+      if (maxT <= 0) return;
+
+      const nextTime = clamp(ratio, 0, 1) * maxT;
+      a.currentTime = nextTime;
+      setCurTime(nextTime);
+
+      if (custom.detail?.autoPlay && a.paused) {
+        try {
+          await a.play();
+        } catch {}
+      }
+    };
+
+    window.addEventListener("em-audio-seek", onExternalSeek);
+    return () => window.removeEventListener("em-audio-seek", onExternalSeek);
+  }, [totalTime]);
+
   const remainingText = useMemo(() => {
     if (!(totalTime > 0)) return "";
     const left = Math.max(0, totalTime - curTime);
-    return `-${formatDuration(left)}`;
+    return `${formatDuration(left)} осталось`;
   }, [totalTime, curTime]);
 
   const onPick = useCallback(
@@ -681,7 +717,7 @@ export default function AudioUploadPanel() {
         </CardHeader>
 
         <CardContent className="p-5 space-y-5">
-          {/* Компактный блок настроек без лишних рамок */}
+          {/* Компактный блок настроек */}
           <div className="rounded-xl bg-slate-100/70 p-3.5 border border-slate-200/60 space-y-3">
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               <Settings2 className="h-3.5 w-3.5" />
@@ -795,10 +831,9 @@ export default function AudioUploadPanel() {
             </div>
           </div>
 
-          {/* Карточка выбранного файла и плеер */}
+          {/* Карточка выбранного файла и двухрядный плеер */}
           {file ? (
             <div className="rounded-xl border border-slate-200/90 bg-white p-3.5 shadow-2xs space-y-3">
-              {/* Шапка файла: имя и аккуратная строка метаданных */}
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="text-xs font-semibold text-foreground truncate" title={file.name}>
@@ -845,10 +880,9 @@ export default function AudioUploadPanel() {
                 </div>
               </div>
 
-              {/* Аудиоплеер с контрастными ползунками */}
               {audioUrl ? (
                 <div
-                  className="rounded-lg bg-slate-50 p-3 border border-slate-200/60 focus:outline-none focus:ring-2 focus:ring-ring/40"
+                  className="rounded-xl bg-slate-50/90 p-3.5 border border-slate-200/70 space-y-3 focus:outline-none focus:ring-2 focus:ring-ring/40"
                   tabIndex={0}
                   onKeyDown={onPlayerKeyDown}
                 >
@@ -873,48 +907,34 @@ export default function AudioUploadPanel() {
                     }}
                   />
 
+                  {/* Верхний ряд: Play + Таймер слева, Громкость справа */}
                   <div className="flex items-center gap-3">
                     <Button
                       type="button"
-                      size="icon-sm"
+                      size="icon"
                       variant="default"
                       onClick={togglePlay}
-                      className="h-8 w-8 rounded-full shrink-0 shadow-xs"
+                      className="h-9 w-9 rounded-full shrink-0 shadow-xs"
                       title={isPlaying ? "Пауза (Space)" : "Воспроизвести (Space)"}
                     >
-                      {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 ml-0.5" />}
+                      {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 ml-0.5" />}
                     </Button>
 
-                    {/* Полоса перемотки */}
-                    <div className="flex-1 min-w-0">
-                      <div
-                        ref={seekBarRef}
-                        className="relative h-2 w-full rounded-full bg-slate-200 cursor-pointer"
-                        {...seekDrag}
-                        role="slider"
-                        aria-label="Seek"
-                        aria-valuemin={0}
-                        aria-valuemax={totalTime || 0}
-                        aria-valuenow={curTime}
-                      >
-                        <div
-                          className="absolute left-0 top-0 h-2 rounded-full bg-primary"
-                          style={{ width: `${progress01 * 100}%` }}
-                        />
-                        <div
-                          className="absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full bg-white border-2 border-primary shadow-xs"
-                          style={{ left: `calc(${progress01 * 100}% - 7px)` }}
-                        />
-                      </div>
-
-                      <div className="mt-1.5 flex items-center justify-between text-[11px] text-muted-foreground tabular-nums">
-                        <span className="font-medium text-foreground">{formatDuration(curTime)}</span>
-                        <span>{remainingText || formatDuration(totalTime)}</span>
-                      </div>
+                    <div className="flex items-center gap-2 text-xs tabular-nums">
+                      <span className="font-semibold text-foreground">{formatDuration(curTime)}</span>
+                      <span className="text-muted-foreground">
+                        / {duration === null ? "…" : duration === -1 ? "—" : formatDuration(duration)}
+                      </span>
+                      {isPlaying ? (
+                        <span className="inline-flex items-end gap-0.5 h-3 ml-0.5">
+                          <span className="w-0.5 h-full bg-sky-500 rounded-full origin-bottom animate-eq-1" />
+                          <span className="w-0.5 h-full bg-sky-500 rounded-full origin-bottom animate-eq-2" />
+                          <span className="w-0.5 h-full bg-sky-500 rounded-full origin-bottom animate-eq-3" />
+                        </span>
+                      ) : null}
                     </div>
 
-                    {/* Громкость */}
-                    <div className="flex items-center gap-1.5 pl-1">
+                    <div className="ml-auto flex items-center gap-2">
                       <Button
                         type="button"
                         size="icon-xs"
@@ -932,7 +952,7 @@ export default function AudioUploadPanel() {
 
                       <div
                         ref={volBarRef}
-                        className="hidden sm:block relative h-1.5 w-16 rounded-full bg-slate-200 cursor-pointer"
+                        className="relative h-1.5 w-20 rounded-full bg-slate-200 cursor-pointer"
                         {...volDrag}
                         role="slider"
                         aria-label="Volume"
@@ -945,10 +965,38 @@ export default function AudioUploadPanel() {
                           style={{ width: `${(muted ? 0 : volume) * 100}%` }}
                         />
                         <div
-                          className="absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full bg-white border border-slate-400 shadow-2xs"
-                          style={{ left: `calc(${(muted ? 0 : volume) * 100}% - 6px)` }}
+                          className="absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full bg-white border border-slate-400 shadow-2xs"
+                          style={{ left: `calc(${(muted ? 0 : volume) * 100}% - 7px)` }}
                         />
                       </div>
+                    </div>
+                  </div>
+
+                  {/* Нижний ряд: Полноширинная полоса перемотки */}
+                  <div className="space-y-1.5">
+                    <div
+                      ref={seekBarRef}
+                      className="relative h-2.5 w-full rounded-full bg-slate-200/90 cursor-pointer"
+                      {...seekDrag}
+                      role="slider"
+                      aria-label="Seek"
+                      aria-valuemin={0}
+                      aria-valuemax={totalTime || 0}
+                      aria-valuenow={curTime}
+                    >
+                      <div
+                        className="absolute left-0 top-0 h-2.5 rounded-full bg-primary"
+                        style={{ width: `${progress01 * 100}%` }}
+                      />
+                      <div
+                        className="absolute top-1/2 h-4 w-4 -translate-y-1/2 rounded-full bg-white border-2 border-primary shadow-sm"
+                        style={{ left: `calc(${progress01 * 100}% - 8px)` }}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground tabular-nums">
+                      <span>{isPlaying ? "воспроизведение" : "пауза (клик по волне = старт)"}</span>
+                      <span>{remainingText || formatDuration(totalTime)}</span>
                     </div>
                   </div>
                 </div>
@@ -958,9 +1006,14 @@ export default function AudioUploadPanel() {
 
           {/* Кнопка отправки */}
           {!isBusy ? (
-            <Button className="w-full h-10 gap-2 shadow-xs" onClick={onStart} disabled={!file}>
-              <Sparkles className="h-4 w-4" />
-              Отправить на обработку
+            <Button
+              className="group relative w-full h-10 gap-2 overflow-hidden shadow-sm transition-all hover:shadow-md"
+              onClick={onStart}
+              disabled={!file}
+            >
+              <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/20 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
+              <Sparkles className="h-4 w-4 transition-transform duration-300 group-hover:rotate-12 group-hover:scale-110" />
+              <span>Отправить на обработку</span>
             </Button>
           ) : (
             <div className="grid grid-cols-[1fr_auto] gap-2">

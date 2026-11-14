@@ -3,63 +3,38 @@
 import { create } from "zustand";
 import type { UserInfo, UserRole } from "@/lib/auth";
 
-/**
- * userStore.ts
- *
- * Лёгкий Zustand-store для пользовательского контекста (UI-уровень).
- *
- * Назначение:
- * - хранение текущей роли пользователя
- * - предоставление простой точки расширения под реальную авторизацию
- *
- * Текущая реализация — demo/dev:
- * - роли переключаются локально
- * - имя генерируется из роли
- */
-type UserState = {
-  /** Текущая информация о пользователе (роль + опциональное имя). */
-  user: UserInfo;
+const USER_LS_KEY = "userRole:v1";
 
-  /**
-   * Устанавливает роль пользователя.
-   *
-   * NOTE:
-   * Сейчас используется только для демо/отладки UI.
-   * В реальном приложении роль должна приходить из auth-слоя,
-   * а не устанавливаться напрямую из UI.
-   */
+function roleToUser(role: UserRole): UserInfo {
+  return {
+    role,
+    name: role === "guest" ? undefined : role === "admin" ? "Admin" : "User",
+  };
+}
+
+type UserState = {
+  user: UserInfo;
   setRole: (role: UserRole) => void;
 };
 
 export const useUserStore = create<UserState>((set) => ({
-  /**
-   * Начальное состояние:
-   * - гость без имени
-   */
   user: {
     role: "guest",
   },
 
-  /**
-   * Переключение роли пользователя.
-   *
-   * Поведение:
-   * - guest → имя отсутствует
-   * - user  → имя "User"
-   * - admin → имя "Admin"
-   *
-   * Это упрощённая логика, удобная для разработки и тестирования UI.
-   */
-  setRole: (role) =>
-    set({
-      user: {
-        role,
-        name:
-          role === "guest"
-            ? undefined
-            : role === "admin"
-            ? "Admin"
-            : "User",
-      },
-    }),
+  setRole: (role) => {
+    try {
+      window.localStorage.setItem(USER_LS_KEY, role);
+    } catch {}
+    set({ user: roleToUser(role) });
+  },
 }));
+
+if (typeof window !== "undefined") {
+  try {
+    const saved = window.localStorage.getItem(USER_LS_KEY) as UserRole | null;
+    if (saved === "guest" || saved === "user" || saved === "admin") {
+      useUserStore.setState({ user: roleToUser(saved) });
+    }
+  } catch {}
+}

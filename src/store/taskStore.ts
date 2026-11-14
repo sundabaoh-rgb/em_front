@@ -12,6 +12,7 @@ export type Segment = {
   label: string;
   startFrame: number;
   endFrame: number;
+  confidence?: number;
 };
 
 export type SpectrogramWire = {
@@ -59,7 +60,6 @@ export type TaskDoneResponse = {
   summary?: { mainEmotion?: string };
   segments?: Segment[];
   spectrogram?: SpectrogramWire;
-
   featuresFile?: FeaturesFile;
 };
 
@@ -185,6 +185,133 @@ function writeSettings(next: { modelId: string; windowMs: number }) {
 }
 
 /* =========================
+   IndexedDB Task Persistence
+========================= */
+
+const TASK_DB_NAME = "front-emotion-task-db";
+const TASK_DB_VERSION = 1;
+const TASK_STORE_NAME = "task-store";
+const TASK_STATE_KEY = "active-task-v1";
+
+type PersistedTaskSnapshot = {
+  status: TaskStatus;
+  taskId: string | null;
+  progress?: number;
+  error: string | null;
+  spectrogram: {
+    frames: number;
+    melBins: number;
+    mel: Uint8Array;
+  } | null;
+  segments: Segment[];
+  mainEmotion: string | null;
+  featuresFile: FeaturesFile | null;
+  featuresCache: FeaturesCache | null;
+  runModelId: string | null;
+  runWindowMs: number | null;
+  audioMeta: {
+    name: string;
+    type: string;
+    lastModified: number;
+    blob: Blob;
+  } | null;
+};
+
+function openTaskDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(TASK_DB_NAME, TASK_DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(TASK_STORE_NAME)) {
+        db.createObjectStore(TASK_STORE_NAME);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function loadTaskSnapshot(): Promise<PersistedTaskSnapshot | null> {
+  if (typeof window === "undefined" || !("indexedDB" in window)) return null;
+  const db = await openTaskDb();
+  try {
+    return await new Promise<PersistedTaskSnapshot | null>((resolve, reject) => {
+      const tx = db.transaction(TASK_STORE_NAME, "readonly");
+      const st = tx.objectStore(TASK_STORE_NAME);
+      const req = st.get(TASK_STATE_KEY);
+      req.onsuccess = () => resolve((req.result as PersistedTaskSnapshot) ?? null);
+      req.onerror = () => reject(req.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function saveTaskSnapshot(s: State): Promise<void> {
+  if (typeof window === "undefined" || !("indexedDB" in window)) return;
+
+  const audioMeta = s.audioFile
+    ? {
+        name: s.audioFile.name || "audio.webm",
+        type: s.audioFile.type || "audio/webm",
+        lastModified: s.audioFile.lastModified || Date.now(),
+        blob: new Blob([s.audioFile], { type: s.audioFile.type || "audio/webm" }),
+      }
+    : null;
+
+  const snapshot: PersistedTaskSnapshot = {
+    status: s.status,
+    taskId: s.taskId,
+    progress: s.progress,
+    error: s.error,
+    spectrogram: s.spectrogram
+      ? {
+          frames: s.spectrogram.frames,
+          melBins: s.spectrogram.melBins,
+          mel: new Uint8Array(s.spectrogram.mel),
+        }
+      : null,
+    segments: s.segments ?? [],
+    mainEmotion: s.mainEmotion ?? null,
+    featuresFile: s.featuresFile ?? null,
+    featuresCache: s.featuresCache ?? null,
+    runModelId: s.runModelId ?? null,
+    runWindowMs: s.runWindowMs ?? null,
+    audioMeta,
+  };
+
+  const db = await openTaskDb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(TASK_STORE_NAME, "readwrite");
+      const st = tx.objectStore(TASK_STORE_NAME);
+      const req = st.put(snapshot, TASK_STATE_KEY);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function clearLegacyAudioIdb(): Promise<void> {
+  if (typeof window === "undefined" || !("indexedDB" in window)) return;
+  try {
+    const req = indexedDB.open("front-emotion", 1);
+    req.onsuccess = () => {
+      const db = req.result;
+      try {
+        if (db.objectStoreNames.contains("audio")) {
+          const tx = db.transaction("audio", "readwrite");
+          tx.objectStore("audio").delete("last-audio-v1");
+        }
+      } catch {}
+      db.close();
+    };
+  } catch {}
+}
+
+/* =========================
    API calls
 ========================= */
 
@@ -232,16 +359,15 @@ async function apiTask(taskId: string, signal?: AbortSignal): Promise<TaskApiRes
 
 export const useTaskStore = create<State>((set, get) => {
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
-
-  // epoch to discard stale async results
   let pollEpoch = 0;
 
-  // aborters
   let uploadAbort: AbortController | null = null;
   let pollAbort: AbortController | null = null;
   let featuresAbort: AbortController | null = null;
 
   let inFlight = false;
+  let isHydrated = false;
+  let userMutatedBeforeHydration = false;
 
   const cancelUpload = () => {
     if (uploadAbort) {
@@ -267,7 +393,6 @@ export const useTaskStore = create<State>((set, get) => {
       pollAbort = null;
     }
     cancelFeaturesPrefetch();
-
     inFlight = false;
   };
 
@@ -366,6 +491,60 @@ export const useTaskStore = create<State>((set, get) => {
     });
   }
 
+  // Восстановление состояния после F5
+  if (typeof window !== "undefined") {
+    loadTaskSnapshot()
+      .then((snap) => {
+        isHydrated = true;
+        if (!snap || userMutatedBeforeHydration) return;
+
+        let restoredAudio: File | null = get().audioFile;
+        if (!restoredAudio && snap.audioMeta?.blob) {
+          restoredAudio = new File([snap.audioMeta.blob], snap.audioMeta.name || "audio.webm", {
+            type: snap.audioMeta.type || "audio/webm",
+            lastModified: snap.audioMeta.lastModified || Date.now(),
+          });
+        }
+
+        const restoredSpec: Spectrogram | null = snap.spectrogram
+          ? {
+              frames: snap.spectrogram.frames,
+              melBins: snap.spectrogram.melBins,
+              mel:
+                snap.spectrogram.mel instanceof Uint8Array
+                  ? snap.spectrogram.mel
+                  : new Uint8Array(snap.spectrogram.mel),
+            }
+          : null;
+
+        set({
+          status: snap.status ?? "idle",
+          taskId: snap.taskId ?? null,
+          progress: snap.progress,
+          error: snap.error ?? null,
+          spectrogram: restoredSpec,
+          segments: Array.isArray(snap.segments) ? snap.segments : [],
+          mainEmotion: snap.mainEmotion ?? null,
+          featuresFile: snap.featuresFile ?? null,
+          featuresCache: snap.featuresCache ?? null,
+          featuresCacheError: null,
+          runModelId: snap.runModelId ?? null,
+          runWindowMs: snap.runWindowMs ?? null,
+          audioFile: restoredAudio,
+        });
+
+        // Если страницу обновили во время анализа — продолжаем опрос задачи
+        if (snap.taskId && (snap.status === "queued" || snap.status === "processing")) {
+          get().pollTask(snap.taskId);
+        } else if (snap.status === "done" && snap.featuresFile?.url && !snap.featuresCache?.blob) {
+          get().prefetchFeatures().catch(() => {});
+        }
+      })
+      .catch(() => {
+        isHydrated = true;
+      });
+  }
+
   return {
     status: "idle",
     taskId: null,
@@ -402,6 +581,7 @@ export const useTaskStore = create<State>((set, get) => {
     setAudioFile: (f) => set({ audioFile: f }),
 
     resetTask: () => {
+      userMutatedBeforeHydration = true;
       pollEpoch += 1;
       stopPolling();
       cancelUpload();
@@ -409,20 +589,25 @@ export const useTaskStore = create<State>((set, get) => {
     },
 
     clearAudio: () => {
+      userMutatedBeforeHydration = true;
       pollEpoch += 1;
       stopPolling();
       cancelUpload();
       set({ ...hardResetState(), audioFile: null });
+      void clearLegacyAudioIdb();
     },
 
     reset: () => {
+      userMutatedBeforeHydration = true;
       pollEpoch += 1;
       stopPolling();
       cancelUpload();
       set({ ...hardResetState(), audioFile: null });
+      void clearLegacyAudioIdb();
     },
 
     cancel: () => {
+      userMutatedBeforeHydration = true;
       pollEpoch += 1;
       stopPolling();
       cancelUpload();
@@ -437,6 +622,7 @@ export const useTaskStore = create<State>((set, get) => {
     uploadAndStart: async (file: File) => {
       if (!file) return;
 
+      userMutatedBeforeHydration = true;
       get().resetTask();
 
       const myEpoch = pollEpoch;
@@ -446,6 +632,7 @@ export const useTaskStore = create<State>((set, get) => {
       const runWindowMs = windowMs;
 
       set({
+        audioFile: file,
         status: "queued",
         error: null,
         progress: 0,
@@ -615,3 +802,29 @@ export const useTaskStore = create<State>((set, get) => {
     },
   };
 });
+
+// Автосохранение любых изменений стора в IndexedDB
+if (typeof window !== "undefined") {
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  useTaskStore.subscribe((state, prevState) => {
+    const changed =
+      state.status !== prevState.status ||
+      state.taskId !== prevState.taskId ||
+      state.spectrogram !== prevState.spectrogram ||
+      state.segments !== prevState.segments ||
+      state.mainEmotion !== prevState.mainEmotion ||
+      state.featuresFile !== prevState.featuresFile ||
+      state.featuresCache !== prevState.featuresCache ||
+      state.audioFile !== prevState.audioFile ||
+      state.runModelId !== prevState.runModelId ||
+      state.runWindowMs !== prevState.runWindowMs;
+
+    if (!changed) return;
+
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveTaskSnapshot(useTaskStore.getState()).catch(() => {});
+    }, 120);
+  });
+}
