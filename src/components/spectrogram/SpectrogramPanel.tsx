@@ -332,7 +332,7 @@ export default function SpectrogramPanel(props: SpectrogramPanelProps) {
   const showLegend = props.showLegend ?? !isPreview;
   const showSegmentsBar = props.showSegmentsBar ?? !isPreview;
   const showTimeRuler = props.showTimeRuler ?? !isPreview;
-  const defaultMode = props.defaultMode ?? "truth";
+  const defaultMode = props.defaultMode ?? "emotion";
   const heightClassName = props.heightClassName ?? (isPreview ? "h-[220px]" : "h-[420px]");
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1053,8 +1053,8 @@ export default function SpectrogramPanel(props: SpectrogramPanelProps) {
           {showModeTabs ? (
             <Tabs value={mode} onValueChange={(v) => setMode(v as Mode)} className="w-full sm:w-auto">
               <TabsList className="grid w-full grid-cols-2 sm:w-[240px]">
-                <TabsTrigger value="truth">Истинность</TabsTrigger>
                 <TabsTrigger value="emotion">Эмоции</TabsTrigger>
+                <TabsTrigger value="truth">Истинность</TabsTrigger>
               </TabsList>
             </Tabs>
           ) : null}
