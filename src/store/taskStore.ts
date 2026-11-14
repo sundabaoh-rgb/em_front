@@ -277,7 +277,7 @@ export const useTaskStore = create<State>((set, get) => {
   const initialWindowMs =
     typeof saved.windowMs === "number" && Number.isFinite(saved.windowMs)
       ? Math.max(5, Math.min(20000, Math.round(saved.windowMs)))
-      : 25;
+      : 3000;
 
   const scheduleNext = (fn: () => void, ms: number) => {
     pollTimer = setTimeout(fn, ms);

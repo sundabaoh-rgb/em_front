@@ -287,7 +287,7 @@ type SpectroCache = {
 };
 
 function buildSpectroCache(frames: number, melBins: number, mel: Uint8Array) {
-  const MAX_CACHE_W = 2400;
+  const MAX_CACHE_W = 4800;
   const cacheW = Math.min(frames, MAX_CACHE_W);
   const cacheH = melBins;
 
@@ -383,11 +383,11 @@ export default function SpectrogramPanel(props: SpectrogramPanelProps) {
 
   const MIN_VIEW_LEN = 120;
   const [viewStart, setViewStart] = useState(0);
-  const [viewLen, setViewLen] = useState(() => Math.min(700, source.frames));
+  const [viewLen, setViewLen] = useState(() => source.frames || 1);
 
   useEffect(() => {
     setViewStart(0);
-    setViewLen(Math.min(700, source.frames));
+    setViewLen(source.frames || 1);
   }, [source.frames]);
 
   const viewEnd = viewStart + viewLen;
@@ -416,7 +416,7 @@ export default function SpectrogramPanel(props: SpectrogramPanelProps) {
 
   const resetView = useCallback(() => {
     setViewStart(0);
-    setViewLen(Math.min(700, source.frames || 1));
+    setViewLen(source.frames || 1);
   }, [source.frames]);
 
   // -------- tooltip --------
